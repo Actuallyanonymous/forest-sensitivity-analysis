@@ -24,7 +24,6 @@
 
 
 var TREE_COVER_ASSET  = 'projects/cs5-pushkinmangla/assets/MP_Hybrid_Tree_Period_2003_2022';
-var SPEI_ASSET_PREFIX = 'projects/cs5-pushkinmangla/assets/SPEI12_';
 
 var OUTPUT_ASSET_ID   = 'projects/cs5-pushkinmangla/assets/MP_Drought_Metrics';
 var OUTPUT_DESC       = 'MP_Drought_Metrics';
@@ -51,10 +50,22 @@ var startYear = treeMeta.select('start_year');
 var endYear   = treeMeta.select('end_year');
 
 // Load SPEI-12 collection — one image per year, band renamed to 'spei'
+// NEW — loads from single multiband asset
+var SPEI12_ASSET = 'projects/cs5-pushkinmangla/assets/SPEI12_Madhya_Pradesh';
+
+// Rename bands at load time (CLI upload strips band names → b1, b2, ...)
+var spei12_raw = ee.Image(SPEI12_ASSET);
+var spei12_bandnames = [];
+for (var yn = 2004; yn <= 2023; yn++) {
+  spei12_bandnames.push('y' + yn);
+}
+var spei12_named = spei12_raw.rename(spei12_bandnames);
+
+// Build per-year collection by selecting individual bands
 var speiImages = [];
 for (var y = START_YEAR; y <= END_YEAR; y++) {
   speiImages.push(
-    ee.Image(SPEI_ASSET_PREFIX + y + '_12')
+    spei12_named.select('y' + y)
       .rename('spei')
       .set('year', y)
   );
