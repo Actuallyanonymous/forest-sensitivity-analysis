@@ -18,7 +18,7 @@
  *   - Rainfall index asset (Script 3a)
  */
 
-// COnfiguration :=
+// Configuration :=
 
 var TREE_COVER_ASSET  = 'projects/cs5-pushkinmangla/assets/MP_Hybrid_Tree_Period_2003_2022';
 var RAIN_INDEX_ASSET  = 'projects/cs5-pushkinmangla/assets/MP_Rain_Index';
@@ -31,7 +31,7 @@ var START_YEAR        = 2004;
 var END_YEAR          = 2022;
 var Z_THRESHOLD       = 1.0;   // z-score above this = anomalous rainfall year
 
-//Choosing the AOI :=
+// Choosing the AOI :=
 
 var aoi = ee.FeatureCollection('FAO/GAUL/2015/level1')
             .filter(ee.Filter.eq('ADM1_NAME', STATE_NAME))
@@ -39,36 +39,47 @@ var aoi = ee.FeatureCollection('FAO/GAUL/2015/level1')
 
 Map.centerObject(aoi, 7);
 
-//Loading the assets :=
+// Loading the assets :=
 
 var treeMeta      = ee.Image(TREE_COVER_ASSET);
 var startYearTree = treeMeta.select('start_year');
 var endYearTree   = treeMeta.select('end_year');
 
-var rainIndex     = ee.Image(RAIN_INDEX_ASSET);
+// Load rain index and rename bands at load time
+// (CLI upload strips band names → b1, b2, ... so we restore them here)
+// Band order: Hm_2004...Hm_2022 first, then zScore_2004...zScore_2022
+var rainIndex_raw  = ee.Image(RAIN_INDEX_ASSET);
+var rainBandNames  = [];
+for (var yr = START_YEAR; yr <= END_YEAR; yr++) {
+  rainBandNames.push('Hm_' + yr);
+}
+for (var yr = START_YEAR; yr <= END_YEAR; yr++) {
+  rainBandNames.push('zScore_' + yr);
+}
+var rainIndex = rainIndex_raw.rename(rainBandNames);
 
 // Reconstruct per-year collections from the multiband asset
-var analysisYears = ee.List.sequence(START_YEAR, END_YEAR);
+// Using client-side loop (not ee.String server-side) to avoid band selection errors
+var hmCol_list     = [];
+var zScoreCol_list = [];
 
-var hmCol = ee.ImageCollection(
-  ee.List.sequence(START_YEAR, END_YEAR).map(function(y) {
-    var year = ee.Number(y).format('%.0f');
-    return rainIndex.select(ee.String('Hm_').cat(year))
-                    .rename('Hm')
-                    .set('year', ee.Number(y));
-  })
-);
+for (var y = START_YEAR; y <= END_YEAR; y++) {
+  hmCol_list.push(
+    rainIndex.select('Hm_' + y)
+             .rename('Hm')
+             .set('year', y)
+  );
+  zScoreCol_list.push(
+    rainIndex.select('zScore_' + y)
+             .rename('zScore')
+             .set('year', y)
+  );
+}
 
-var zScoreCol = ee.ImageCollection(
-  ee.List.sequence(START_YEAR, END_YEAR).map(function(y) {
-    var year = ee.Number(y).format('%.0f');
-    return rainIndex.select(ee.String('zScore_').cat(year))
-                    .rename('zScore')
-                    .set('year', ee.Number(y));
-  })
-);
+var hmCol     = ee.ImageCollection(hmCol_list);
+var zScoreCol = ee.ImageCollection(zScoreCol_list);
 
-//tkaing the ndvi from landsat :=
+// Taking the NDVI from Landsat :=
 
 var maskClouds = function(image) {
   var qa   = image.select('QA_PIXEL');
@@ -105,10 +116,10 @@ var ndviCol = ee.ImageCollection(
   ee.List.sequence(START_YEAR, END_YEAR + 1).map(getAnnualNDVI)
 );
 
-
 // BASELINE NDVI (Yn_bar)
 // Mean NDVI across non-anomalous years only
 
+var analysisYears = ee.List.sequence(START_YEAR, END_YEAR);
 
 var Yn_bar = ee.ImageCollection(analysisYears.map(function(y) {
   var year   = ee.Number(y);
@@ -122,9 +133,7 @@ var Yn_bar = ee.ImageCollection(analysisYears.map(function(y) {
   return ndvi.updateMask(isNormal.and(isForest)).set('year', year);
 })).mean().rename('ndvi_baseline');
 
-
 // SIGNED RESISTANCE & RESILIENCE
-
 
 var metricsCol = ee.ImageCollection(analysisYears.map(function(y) {
   var year   = ee.Number(y);
@@ -156,9 +165,7 @@ var metricsCol = ee.ImageCollection(analysisYears.map(function(y) {
     .set('year', year);
 }));
 
-
 // AGGREGATE & EXPORT :=
-
 
 var meanResist = metricsCol.select('resistance').mean().clip(aoi);
 var meanResil  = metricsCol.select('resilience').mean().clip(aoi);
