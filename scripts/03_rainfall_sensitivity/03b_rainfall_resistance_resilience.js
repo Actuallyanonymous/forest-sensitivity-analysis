@@ -49,15 +49,12 @@ var endYearTree   = treeMeta.select('end_year');
 // (CLI upload strips band names → b1, b2, ... so we restore them here)
 // Band order: Hm_2004...Hm_2022 first, then zScore_2004...zScore_2022
 var rainIndex_raw  = ee.Image(RAIN_INDEX_ASSET);
-var rainBandNames  = [];
+var rainBandNames = [];
 for (var yr = START_YEAR; yr <= END_YEAR; yr++) {
   rainBandNames.push('Hm_' + yr);
-}
-for (var yr = START_YEAR; yr <= END_YEAR; yr++) {
   rainBandNames.push('zScore_' + yr);
 }
 var rainIndex = rainIndex_raw.rename(rainBandNames);
-
 // Reconstruct per-year collections from the multiband asset
 // Using client-side loop (not ee.String server-side) to avoid band selection errors
 var hmCol_list     = [];
