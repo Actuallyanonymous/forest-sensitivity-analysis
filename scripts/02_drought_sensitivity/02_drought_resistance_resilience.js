@@ -16,12 +16,10 @@
  * Requires:
  *   - Forest mask asset from Script 1
  *   - SPEI-12 assets from spei-drought-analysis-pipeline
-* The link for the above mentioned pipeline is : https://github.com/Actuallyanonymous/spei-drought-analysis-pipeline
+ * The link for the above mentioned pipeline is : https://github.com/Actuallyanonymous/spei-drought-analysis-pipeline
  */
 
-
 // CONFIGURATION :=
-
 
 var TREE_COVER_ASSET  = 'projects/cs5-pushkinmangla/assets/MP_Hybrid_Tree_Period_2003_2022';
 
@@ -33,9 +31,7 @@ var START_YEAR        = 2004;
 var END_YEAR          = 2022;
 var DROUGHT_THRESHOLD = -1.0;   // SPEI-12 below this = drought year
 
-
 // AOI :=
-
 
 var aoi = ee.FeatureCollection('FAO/GAUL/2015/level1')
             .filter(ee.Filter.eq('ADM1_NAME', STATE_NAME))
@@ -50,7 +46,7 @@ var startYear = treeMeta.select('start_year');
 var endYear   = treeMeta.select('end_year');
 
 // Load SPEI-12 collection — one image per year, band renamed to 'spei'
-// NEW — loads from single multiband asset
+// Loads from single multiband asset
 var SPEI12_ASSET = 'projects/cs5-pushkinmangla/assets/SPEI12_Madhya_Pradesh';
 
 // Rename bands at load time (CLI upload strips band names → b1, b2, ...)
@@ -108,17 +104,17 @@ var getAnnualNDVI = function(year) {
 var ndviYears = ee.List.sequence(START_YEAR, END_YEAR + 1);
 var ndviCol   = ee.ImageCollection(ndviYears.map(getAnnualNDVI));
 
-
 // BASELINE NDVI (Yn_bar) :=
-//Mean NDVI across non-drought years only
-
+// Mean NDVI across non-drought years only
 
 var analysisYears = ee.List.sequence(START_YEAR, END_YEAR);
 
+// Added .resample('bilinear') before .reproject() in linkedCol
 var linkedCol = ee.ImageCollection(analysisYears.map(function(y) {
   var year = ee.Number(y);
   var ndvi = ndviCol.filter(ee.Filter.eq('year', year)).first();
   var spei = speiCol.filter(ee.Filter.eq('year', year)).first()
+               .resample('bilinear')
                .reproject({crs: ndvi.projection(), scale: 30});
   return ndvi.addBands(spei).set('year', year);
 }));
@@ -134,42 +130,37 @@ var Yn_bar = ndviArray
   .arrayProject([0])
   .arrayFlatten([['ndvi_baseline']]);
 
-
 // RESISTANCE & RESILIENCE :=
-
 
 var metricsCol = ee.ImageCollection(analysisYears.map(function(y) {
   var year = ee.Number(y);
 
-  var ndviYe   = ndviCol.filter(ee.Filter.eq('year', year)).first();
-  var speiYe   = speiCol.filter(ee.Filter.eq('year', year)).first()
-                   .reproject({crs: ndviYe.projection(), scale: 30});
+  var ndviYe = ndviCol.filter(ee.Filter.eq('year', year)).first();
+
+  // Added .resample('bilinear') before .reproject() in metricsCol
+  var speiYe = speiCol.filter(ee.Filter.eq('year', year)).first()
+                 .resample('bilinear')
+                 .reproject({crs: ndviYe.projection(), scale: 30});
 
   // Only compute on forest pixels during drought years
   var isForest  = startYear.lte(year).and(endYear.gte(year));
   var isDrought = speiYe.lt(DROUGHT_THRESHOLD);
   var mask      = isForest.and(isDrought);
 
-  var diff       = ndviYe.subtract(Yn_bar).abs();
+  // Added .max(ee.Image(1e-6)) to avoid division by zero
+  var diff       = ndviYe.subtract(Yn_bar).abs().max(ee.Image(1e-6));
   var resistance = Yn_bar.divide(diff).rename('resistance');
 
   var ndviNext   = ndviCol.filter(ee.Filter.eq('year', year.add(1))).first();
-  var resilience = ee.Image(ee.Algorithms.If(
-    ndviNext,
-    ndviYe.subtract(Yn_bar).abs()
-      .divide(ndviNext.subtract(Yn_bar).abs())
-      .rename('resilience'),
-    ee.Image(0).rename('resilience')
-  ));
+  var diffNext   = ndviNext.subtract(Yn_bar).abs().max(ee.Image(1e-6));
+  var resilience = diff.divide(diffNext).rename('resilience');
 
   return ee.Image.cat([resistance, resilience])
     .updateMask(mask)
     .set('year', year);
 }));
 
-
 // AGGREGATE & EXPORT :=
-
 
 var meanResistance = metricsCol.select('resistance').mean().clip(aoi);
 var meanResilience = metricsCol.select('resilience').mean().clip(aoi);
