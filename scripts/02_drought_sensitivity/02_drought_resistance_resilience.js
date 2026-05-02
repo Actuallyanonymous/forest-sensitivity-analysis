@@ -16,16 +16,13 @@
  * Requires:
  *   - Forest mask asset from Script 1
  *   - SPEI-12 assets from spei-drought-analysis-pipeline
- * The link for the above mentioned pipeline is : https://github.com/Actuallyanonymous/spei-drought-analysis-pipeline
  */
 
 // CONFIGURATION :=
 
 var TREE_COVER_ASSET  = 'projects/cs5-pushkinmangla/assets/MP_Hybrid_Tree_Period_2003_2022';
-
 var OUTPUT_ASSET_ID   = 'projects/cs5-pushkinmangla/assets/MP_Drought_Metrics';
 var OUTPUT_DESC       = 'MP_Drought_Metrics';
-
 var STATE_NAME        = 'Madhya Pradesh';
 var START_YEAR        = 2004;
 var END_YEAR          = 2022;
@@ -45,19 +42,16 @@ var treeMeta  = ee.Image(TREE_COVER_ASSET);
 var startYear = treeMeta.select('start_year');
 var endYear   = treeMeta.select('end_year');
 
-// Load SPEI-12 collection — one image per year, band renamed to 'spei'
-// Loads from single multiband asset
+// Load SPEI-12 collection from single multiband asset
 var SPEI12_ASSET = 'projects/cs5-pushkinmangla/assets/SPEI12_Madhya_Pradesh';
-
-// Rename bands at load time (CLI upload strips band names → b1, b2, ...)
-var spei12_raw = ee.Image(SPEI12_ASSET);
+var spei12_raw   = ee.Image(SPEI12_ASSET);
 var spei12_bandnames = [];
 for (var yn = 2004; yn <= 2023; yn++) {
   spei12_bandnames.push('y' + yn);
 }
 var spei12_named = spei12_raw.rename(spei12_bandnames);
 
-// Build per-year collection by selecting individual bands
+// Build per-year SPEI collection
 var speiImages = [];
 for (var y = START_YEAR; y <= END_YEAR; y++) {
   speiImages.push(
@@ -106,29 +100,21 @@ var ndviCol   = ee.ImageCollection(ndviYears.map(getAnnualNDVI));
 
 // BASELINE NDVI (Yn_bar) :=
 // Mean NDVI across non-drought years only
+// Uses simple masked ImageCollection mean — we are trying to avoid GEE array scalign issues here
 
 var analysisYears = ee.List.sequence(START_YEAR, END_YEAR);
 
-// Added .resample('bilinear') before .reproject() in linkedCol
-var linkedCol = ee.ImageCollection(analysisYears.map(function(y) {
+var ndviNonDrought = ee.ImageCollection(analysisYears.map(function(y) {
   var year = ee.Number(y);
   var ndvi = ndviCol.filter(ee.Filter.eq('year', year)).first();
   var spei = speiCol.filter(ee.Filter.eq('year', year)).first()
                .resample('bilinear')
                .reproject({crs: ndvi.projection(), scale: 30});
-  return ndvi.addBands(spei).set('year', year);
+  var isNonDrought = spei.gte(DROUGHT_THRESHOLD);
+  return ndvi.updateMask(isNonDrought).set('year', year);
 }));
 
-// Array method — mask out drought years, mean the rest
-var arrayImg  = linkedCol.toArray();
-var ndviArray = arrayImg.arraySlice(1, 0, 1);
-var speiArray = arrayImg.arraySlice(1, 1, 2);
-
-var Yn_bar = ndviArray
-  .arrayMask(speiArray.gte(DROUGHT_THRESHOLD))
-  .arrayReduce({reducer: ee.Reducer.mean(), axes: [0]})
-  .arrayProject([0])
-  .arrayFlatten([['ndvi_baseline']]);
+var Yn_bar = ndviNonDrought.mean().rename('ndvi_baseline');
 
 // RESISTANCE & RESILIENCE :=
 
@@ -136,8 +122,6 @@ var metricsCol = ee.ImageCollection(analysisYears.map(function(y) {
   var year = ee.Number(y);
 
   var ndviYe = ndviCol.filter(ee.Filter.eq('year', year)).first();
-
-  // Added .resample('bilinear') before .reproject() in metricsCol
   var speiYe = speiCol.filter(ee.Filter.eq('year', year)).first()
                  .resample('bilinear')
                  .reproject({crs: ndviYe.projection(), scale: 30});
@@ -147,12 +131,11 @@ var metricsCol = ee.ImageCollection(analysisYears.map(function(y) {
   var isDrought = speiYe.lt(DROUGHT_THRESHOLD);
   var mask      = isForest.and(isDrought);
 
-  // Added .max(ee.Image(1e-6)) to avoid division by zero
-  var diff       = ndviYe.subtract(Yn_bar).abs().max(ee.Image(1e-6));
+  var diff       = ndviYe.subtract(Yn_bar).abs().max(1e-6);
   var resistance = Yn_bar.divide(diff).rename('resistance');
 
-  var ndviNext   = ndviCol.filter(ee.Filter.eq('year', year.add(1))).first();
-  var diffNext   = ndviNext.subtract(Yn_bar).abs().max(ee.Image(1e-6));
+  var ndviNext = ndviCol.filter(ee.Filter.eq('year', year.add(1))).first();
+  var diffNext = ndviNext.subtract(Yn_bar).abs().max(1e-6);
   var resilience = diff.divide(diffNext).rename('resilience');
 
   return ee.Image.cat([resistance, resilience])
@@ -169,7 +152,7 @@ var finalOutput = meanResistance.rename('resistance')
                                 .addBands(meanResilience.rename('resilience'));
 
 // Preview
-var visParams = {min: 0, max: 2, palette: ['red','yellow','green','blue']};
+var visParams = {min: 0, max: 10, palette: ['red','yellow','green','blue']};
 Map.addLayer(meanResistance, visParams, 'Drought resistance');
 Map.addLayer(meanResilience, visParams, 'Drought resilience');
 
