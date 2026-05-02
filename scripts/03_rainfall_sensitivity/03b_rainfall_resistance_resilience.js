@@ -31,7 +31,7 @@ var START_YEAR        = 2004;
 var END_YEAR          = 2022;
 var Z_THRESHOLD       = 1.0;   // z-score above this = anomalous rainfall year
 
-// Choosing the AOI :=
+// AOI :=
 
 var aoi = ee.FeatureCollection('FAO/GAUL/2015/level1')
             .filter(ee.Filter.eq('ADM1_NAME', STATE_NAME))
@@ -46,17 +46,16 @@ var startYearTree = treeMeta.select('start_year');
 var endYearTree   = treeMeta.select('end_year');
 
 // Load rain index and rename bands at load time
-// (CLI upload strips band names → b1, b2, ... so we restore them here)
-// Band order: Hm_2004...Hm_2022 first, then zScore_2004...zScore_2022
-var rainIndex_raw  = ee.Image(RAIN_INDEX_ASSET);
+// Band order is interleaved: Hm_2004, zScore_2004, Hm_2005, zScore_2005, ...
+var rainIndex_raw = ee.Image(RAIN_INDEX_ASSET);
 var rainBandNames = [];
 for (var yr = START_YEAR; yr <= END_YEAR; yr++) {
   rainBandNames.push('Hm_' + yr);
   rainBandNames.push('zScore_' + yr);
 }
 var rainIndex = rainIndex_raw.rename(rainBandNames);
-// Reconstruct per-year collections from the multiband asset
-// Using client-side loop (not ee.String server-side) to avoid band selection errors
+
+// Here reconstructing per-year collections from the multiband asset
 var hmCol_list     = [];
 var zScoreCol_list = [];
 
@@ -76,7 +75,7 @@ for (var y = START_YEAR; y <= END_YEAR; y++) {
 var hmCol     = ee.ImageCollection(hmCol_list);
 var zScoreCol = ee.ImageCollection(zScoreCol_list);
 
-// Taking the NDVI from Landsat :=
+// LANDSAT NDVI :=
 
 var maskClouds = function(image) {
   var qa   = image.select('QA_PIXEL');
@@ -108,20 +107,22 @@ var getAnnualNDVI = function(year) {
   return l89.merge(l57).median().set('year', year).rename('ndvi');
 };
 
-// Need END_YEAR+1 for resilience (next year NDVI)
+// Need END_YEAR+1 for resilience
 var ndviCol = ee.ImageCollection(
   ee.List.sequence(START_YEAR, END_YEAR + 1).map(getAnnualNDVI)
 );
 
-// BASELINE NDVI (Yn_bar)
+// BASELINE NDVI (Yn_bar) :=
 // Mean NDVI across non-anomalous years only
 
 var analysisYears = ee.List.sequence(START_YEAR, END_YEAR);
 
+// FIX 1: added .resample('bilinear') before .reproject()
 var Yn_bar = ee.ImageCollection(analysisYears.map(function(y) {
   var year   = ee.Number(y);
   var ndvi   = ee.Image(ndviCol.filter(ee.Filter.eq('year', year)).first());
   var zScore = ee.Image(zScoreCol.filter(ee.Filter.eq('year', year)).first())
+                 .resample('bilinear')
                  .reproject({crs: ndvi.projection(), scale: 30});
 
   var isNormal = zScore.select('zScore').abs().lt(Z_THRESHOLD);
@@ -130,13 +131,16 @@ var Yn_bar = ee.ImageCollection(analysisYears.map(function(y) {
   return ndvi.updateMask(isNormal.and(isForest)).set('year', year);
 })).mean().rename('ndvi_baseline');
 
-// SIGNED RESISTANCE & RESILIENCE
+// SIGNED RESISTANCE & RESILIENCE :=
 
 var metricsCol = ee.ImageCollection(analysisYears.map(function(y) {
   var year   = ee.Number(y);
 
   var ndviYe = ee.Image(ndviCol.filter(ee.Filter.eq('year', year)).first());
+
+  // FIX 1: added .resample('bilinear') before .reproject()
   var zScore = ee.Image(zScoreCol.filter(ee.Filter.eq('year', year)).first())
+                 .resample('bilinear')
                  .reproject({crs: ndviYe.projection(), scale: 30});
 
   // Only compute on forest pixels during anomalous rainfall years
@@ -144,16 +148,22 @@ var metricsCol = ee.ImageCollection(analysisYears.map(function(y) {
   var isForest    = startYearTree.lte(year).and(endYearTree.gte(year));
   var mask        = isAnomalous.and(isForest);
 
-  var diffRaw    = ndviYe.subtract(Yn_bar);
-  var diffAbs    = diffRaw.abs();
+  var diffRaw = ndviYe.subtract(Yn_bar);
+
+  // FIX 2: added .max(1e-6) to avoid division by zero
+  var diffAbs = diffRaw.abs().max(1e-6);
 
   var resistance = Yn_bar.divide(diffAbs)
                          .multiply(diffRaw.signum())
                          .rename('resistance');
 
-  var ndviNext   = ee.Image(ndviCol.filter(ee.Filter.eq('year', year.add(1))).first());
-  var diffNext   = ndviNext.subtract(Yn_bar);
-  var resilience = diffAbs.divide(diffNext.abs())
+  var ndviNext = ee.Image(ndviCol.filter(ee.Filter.eq('year', year.add(1))).first());
+  var diffNext = ndviNext.subtract(Yn_bar);
+
+  // FIX 2: added .max(1e-6) to avoid division by zero
+  var diffNextAbs = diffNext.abs().max(1e-6);
+
+  var resilience = diffAbs.divide(diffNextAbs)
                           .multiply(diffNext.signum())
                           .rename('resilience');
 
