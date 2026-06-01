@@ -2,16 +2,11 @@
  * Forest Sensitivity Analysis Pipeline — Script 3b
  * Heavy Rainfall Resistance & Resilience
  *
- * Loads the rainfall index asset from Script 3a, applies z-score
- * threshold to identify anomalous years, then computes signed
- * resistance and resilience for forest pixels.
- *
- * Signed metrics:
+ * Signed resistance (both +ve and -ve events):
  *   Resistance = Yn_bar / |Ye - Yn_bar| × sign(Ye - Yn_bar)
- *   Resilience = |Ye - Yn_bar| / |Y(e+1) - Yn_bar| × sign(Y(e+1) - Yn_bar)
  *
- * Positive = forest maintained/recovered
- * Negative = forest declined/continued declining
+ * Resilience computed ONLY when Ye < Yn_bar (negative effect years):
+ *   Resilience = |Ye - Yn_bar| / |Ye+1 - Yn_bar| × sign(Ye+1 - Yn_bar)
  *
  * Requires:
  *   - Forest mask asset (Script 1)
@@ -29,7 +24,7 @@ var OUTPUT_DESC       = 'MP_Rain_Metrics';
 var STATE_NAME        = 'Madhya Pradesh';
 var START_YEAR        = 2004;
 var END_YEAR          = 2022;
-var Z_THRESHOLD       = 1.0;   // z-score above this = anomalous rainfall year
+var Z_THRESHOLD       = 1.0;
 
 // AOI :=
 
@@ -45,8 +40,6 @@ var treeMeta      = ee.Image(TREE_COVER_ASSET);
 var startYearTree = treeMeta.select('start_year');
 var endYearTree   = treeMeta.select('end_year');
 
-// Load rain index and rename bands at load time
-// Band order is interleaved: Hm_2004, zScore_2004, Hm_2005, zScore_2005, ...
 var rainIndex_raw = ee.Image(RAIN_INDEX_ASSET);
 var rainBandNames = [];
 for (var yr = START_YEAR; yr <= END_YEAR; yr++) {
@@ -55,39 +48,31 @@ for (var yr = START_YEAR; yr <= END_YEAR; yr++) {
 }
 var rainIndex = rainIndex_raw.rename(rainBandNames);
 
-// Here reconstructing per-year collections from the multiband asset
 var hmCol_list     = [];
 var zScoreCol_list = [];
-
 for (var y = START_YEAR; y <= END_YEAR; y++) {
   hmCol_list.push(
-    rainIndex.select('Hm_' + y)
-             .rename('Hm')
-             .set('year', y)
+    rainIndex.select('Hm_' + y).rename('Hm').set('year', y)
   );
   zScoreCol_list.push(
-    rainIndex.select('zScore_' + y)
-             .rename('zScore')
-             .set('year', y)
+    rainIndex.select('zScore_' + y).rename('zScore').set('year', y)
   );
 }
-
 var hmCol     = ee.ImageCollection(hmCol_list);
 var zScoreCol = ee.ImageCollection(zScoreCol_list);
 
 // LANDSAT NDVI :=
 
 var maskClouds = function(image) {
-  var qa   = image.select('QA_PIXEL');
-  var mask = qa.bitwiseAnd(1 << 3).eq(0)
-               .and(qa.bitwiseAnd(1 << 4).eq(0));
-  return image.updateMask(mask);
+  var qa = image.select('QA_PIXEL');
+  return image.updateMask(
+    qa.bitwiseAnd(1 << 3).eq(0).and(qa.bitwiseAnd(1 << 4).eq(0))
+  );
 };
 
 var getAnnualNDVI = function(year) {
   var start = ee.Date.fromYMD(year, 1, 1);
   var end   = ee.Date.fromYMD(year, 12, 31);
-
   var l89 = ee.ImageCollection('LANDSAT/LC08/C02/T1_L2')
               .merge(ee.ImageCollection('LANDSAT/LC09/C02/T1_L2'))
               .filterDate(start, end).filterBounds(aoi)
@@ -95,7 +80,6 @@ var getAnnualNDVI = function(year) {
               .map(function(img) {
                 return img.normalizedDifference(['SR_B5','SR_B4']).rename('ndvi');
               });
-
   var l57 = ee.ImageCollection('LANDSAT/LT05/C02/T1_L2')
               .merge(ee.ImageCollection('LANDSAT/LE07/C02/T1_L2'))
               .filterDate(start, end).filterBounds(aoi)
@@ -103,11 +87,9 @@ var getAnnualNDVI = function(year) {
               .map(function(img) {
                 return img.normalizedDifference(['SR_B4','SR_B3']).rename('ndvi');
               });
-
   return l89.merge(l57).median().set('year', year).rename('ndvi');
 };
 
-// Need END_YEAR+1 for resilience
 var ndviCol = ee.ImageCollection(
   ee.List.sequence(START_YEAR, END_YEAR + 1).map(getAnnualNDVI)
 );
@@ -117,17 +99,14 @@ var ndviCol = ee.ImageCollection(
 
 var analysisYears = ee.List.sequence(START_YEAR, END_YEAR);
 
-// FIX 1: added .resample('bilinear') before .reproject()
 var Yn_bar = ee.ImageCollection(analysisYears.map(function(y) {
   var year   = ee.Number(y);
   var ndvi   = ee.Image(ndviCol.filter(ee.Filter.eq('year', year)).first());
   var zScore = ee.Image(zScoreCol.filter(ee.Filter.eq('year', year)).first())
                  .resample('bilinear')
                  .reproject({crs: ndvi.projection(), scale: 30});
-
   var isNormal = zScore.select('zScore').abs().lt(Z_THRESHOLD);
   var isForest = startYearTree.lte(year).and(endYearTree.gte(year));
-
   return ndvi.updateMask(isNormal.and(isForest)).set('year', year);
 })).mean().rename('ndvi_baseline');
 
@@ -137,8 +116,6 @@ var metricsCol = ee.ImageCollection(analysisYears.map(function(y) {
   var year   = ee.Number(y);
 
   var ndviYe = ee.Image(ndviCol.filter(ee.Filter.eq('year', year)).first());
-
-  // FIX 1: added .resample('bilinear') before .reproject()
   var zScore = ee.Image(zScoreCol.filter(ee.Filter.eq('year', year)).first())
                  .resample('bilinear')
                  .reproject({crs: ndviYe.projection(), scale: 30});
@@ -146,30 +123,36 @@ var metricsCol = ee.ImageCollection(analysisYears.map(function(y) {
   // Only compute on forest pixels during anomalous rainfall years
   var isAnomalous = zScore.select('zScore').gt(Z_THRESHOLD);
   var isForest    = startYearTree.lte(year).and(endYearTree.gte(year));
-  var mask        = isAnomalous.and(isForest);
+  var eventMask   = isAnomalous.and(isForest);
 
   var diffRaw = ndviYe.subtract(Yn_bar);
-
-  // FIX 2: added .max(1e-6) to avoid division by zero
   var diffAbs = diffRaw.abs().max(1e-6);
 
+  // Resistance: signed, computed for ALL anomalous years (both +ve and -ve)
   var resistance = Yn_bar.divide(diffAbs)
                          .multiply(diffRaw.signum())
-                         .rename('resistance');
+                         .rename('resistance')
+                         .updateMask(eventMask);
 
-  var ndviNext = ee.Image(ndviCol.filter(ee.Filter.eq('year', year.add(1))).first());
-  var diffNext = ndviNext.subtract(Yn_bar);
+  // Resilience: ONLY computed when Ye < Yn_bar (negative effect years)
+  // This avoids the 2D interpretation problem when Ye > Yn_bar
+// and also thinking about it, resilience only makes sense, 
+//when Ye < Yn_bar , as if NDVI has increased from baseline, no point in calculating the recovering
+//as the nae sugegsts. ALthough we are missing out on cases , if increase happened, and due to some lasting effect of rainfall,
+//ndvi decreased in further years. But we're ignoring that case here, just for simplicity of understanding in 2-D.
+  var isNegativeEffect = ndviYe.lt(Yn_bar);
+  var resilMask        = eventMask.and(isNegativeEffect);
 
-  // FIX 2: added .max(1e-6) to avoid division by zero
+  var ndviNext    = ee.Image(ndviCol.filter(ee.Filter.eq('year', year.add(1))).first());
+  var diffNext    = ndviNext.subtract(Yn_bar);
   var diffNextAbs = diffNext.abs().max(1e-6);
 
   var resilience = diffAbs.divide(diffNextAbs)
                           .multiply(diffNext.signum())
-                          .rename('resilience');
+                          .rename('resilience')
+                          .updateMask(resilMask);
 
-  return ee.Image.cat([resistance, resilience])
-    .updateMask(mask)
-    .set('year', year);
+  return ee.Image.cat([resistance, resilience]).set('year', year);
 }));
 
 // AGGREGATE & EXPORT :=
@@ -181,12 +164,12 @@ var finalOutput = meanResist.rename('resistance')
                             .addBands(meanResil.rename('resilience'));
 
 // Preview
-var visParams = {
-  min: -3, max: 3,
-  palette: ['8b0000','ff0000','ffffff','00ff00','006400']
-};
-Map.addLayer(meanResist, visParams, 'Rainfall resistance');
-Map.addLayer(meanResil,  visParams, 'Rainfall resilience');
+var visResist = {min: -3, max: 3,
+  palette: ['8b0000','ff0000','ffffff','00ff00','006400']};
+var visResil  = {min: -3, max: 3,
+  palette: ['006400','ffffff','8b0000','ffffff','004d00']};
+Map.addLayer(meanResist, visResist, 'Rainfall resistance');
+Map.addLayer(meanResil,  visResil,  'Rainfall resilience');
 
 Export.image.toAsset({
   image       : finalOutput,
