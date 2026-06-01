@@ -1,0 +1,193 @@
+/**
+ * Drought Resistance & Resilience — Export Coloured Maps to Drive
+ */
+
+
+//1. CONFIGURATION
+
+
+var DROUGHT_ASSET     = 'projects/cs5-pushkinmangla/assets/MP_Drought_Metrics';
+var SPEI12_ASSET      = 'projects/cs5-pushkinmangla/assets/SPEI12_Madhya_Pradesh';
+var TREE_ASSET        = 'projects/cs5-pushkinmangla/assets/MP_Hybrid_Tree_Period_2003_2022';
+var START_YEAR        = 2004;
+var END_YEAR          = 2022;
+var DROUGHT_THRESHOLD = -1.0;
+var EXPORT_SCALE      = 500;
+
+var aoi = ee.FeatureCollection('FAO/GAUL/2015/level1')
+            .filter(ee.Filter.eq('ADM1_NAME', 'Madhya Pradesh'))
+            .geometry();
+
+//===========================================================================
+//                          2. LOAD DROUGHT METRICS
+//===========================================================================
+
+var droughtImg = ee.Image(DROUGHT_ASSET).rename(['resistance', 'resilience']);
+var resistance = droughtImg.select('resistance');
+var resilience = droughtImg.select('resilience');
+
+//===========================================================================
+//                          3. REBUILD Yn_bar AND ndviNextMean
+//===========================================================================
+
+var treeMeta  = ee.Image(TREE_ASSET);
+var startYear = treeMeta.select('start_year');
+var endYear   = treeMeta.select('end_year');
+
+var spei12_raw = ee.Image(SPEI12_ASSET);
+var spei12_bandnames = [];
+for (var yn = 2004; yn <= 2023; yn++) spei12_bandnames.push('y' + yn);
+var spei12_named = spei12_raw.rename(spei12_bandnames);
+
+var speiImages = [];
+for (var y = START_YEAR; y <= END_YEAR; y++) {
+  speiImages.push(
+    spei12_named.select('y' + y).rename('spei').set('year', y)
+  );
+}
+var speiCol = ee.ImageCollection(speiImages);
+
+var maskClouds = function(image) {
+  var qa = image.select('QA_PIXEL');
+  return image.updateMask(
+    qa.bitwiseAnd(1 << 3).eq(0).and(qa.bitwiseAnd(1 << 4).eq(0))
+  );
+};
+
+// FIXED: brackets correct, .select('ndvi') forced, empty collection handled
+var getAnnualNDVI = function(year) {
+  var start = ee.Date.fromYMD(year, 1, 1);
+  var end   = ee.Date.fromYMD(year, 12, 31);
+
+  var l89 = ee.ImageCollection('LANDSAT/LC08/C02/T1_L2')
+              .merge(ee.ImageCollection('LANDSAT/LC09/C02/T1_L2'))
+              .filterDate(start, end).filterBounds(aoi)
+              .map(maskClouds)
+              .map(function(img) {
+                return img.normalizedDifference(['SR_B5','SR_B4']).rename('ndvi');
+              });
+
+  var l57 = ee.ImageCollection('LANDSAT/LT05/C02/T1_L2')
+              .merge(ee.ImageCollection('LANDSAT/LE07/C02/T1_L2'))
+              .filterDate(start, end).filterBounds(aoi)
+              .map(maskClouds)
+              .map(function(img) {
+                return img.normalizedDifference(['SR_B4','SR_B3']).rename('ndvi');
+              });
+
+  var merged = l89.merge(l57);
+
+  var result = ee.Algorithms.If(
+    merged.size().gt(0),
+    merged.median().select('ndvi'),
+    ee.Image.constant(0).rename('ndvi').updateMask(ee.Image(0))
+  );
+
+  return ee.Image(result).rename('ndvi').set('year', year);
+};
+
+var ndviCol = ee.ImageCollection(
+  ee.List.sequence(START_YEAR, END_YEAR + 1).map(getAnnualNDVI)
+);
+
+var analysisYears = ee.List.sequence(START_YEAR, END_YEAR);
+
+// Yn_bar — mean NDVI across non-drought years
+var Yn_bar = ee.ImageCollection(analysisYears.map(function(y) {
+  var year = ee.Number(y);
+  var ndvi = ndviCol.filter(ee.Filter.eq('year', year)).first();
+  var spei = speiCol.filter(ee.Filter.eq('year', year)).first()
+               .resample('bilinear')
+               .reproject({crs: ndvi.projection(), scale: 30});
+  return ndvi.updateMask(spei.gte(DROUGHT_THRESHOLD)).set('year', year);
+})).mean().rename('ndvi_baseline');
+
+// ndviNextMean — mean of Ye+1 across drought years only
+var ndviNextMean = ee.ImageCollection(analysisYears.map(function(y) {
+  var year   = ee.Number(y);
+  var ndviYe = ndviCol.filter(ee.Filter.eq('year', year)).first();
+  var speiYe = speiCol.filter(ee.Filter.eq('year', year)).first()
+                 .resample('bilinear')
+                 .reproject({crs: ndviYe.projection(), scale: 30});
+  var isForest  = startYear.lte(year).and(endYear.gte(year));
+  var isDrought = speiYe.lt(DROUGHT_THRESHOLD);
+  var ndviNext  = ndviCol.filter(ee.Filter.eq('year', year.add(1))).first();
+  return ndviNext.updateMask(isForest.and(isDrought)).set('year', year);
+})).mean().rename('ndvi_next_mean');
+
+// Overshoot mask
+var isOvershot = ndviNextMean.gt(Yn_bar);
+
+//===========================================================================
+//                          4. DIAGNOSTICS — run first, check console
+//===========================================================================
+
+print('resistance bands:', resistance.bandNames());
+print('resilience bands:', resilience.bandNames());
+print('Yn_bar bands:', Yn_bar.bandNames());
+print('ndviNextMean bands:', ndviNextMean.bandNames());
+
+//===========================================================================
+//                          5. BUILD COLOURED RESISTANCE IMAGE
+//===========================================================================
+
+var resistanceColoured = resistance.visualize({
+  min: 0, max: 10,
+  palette: ['8b0000','d73027','fc8d59','fee090',
+            'ffffbf','d9ef8b','91cf60','1a9850','006837']
+});
+
+//===========================================================================
+//                          6. BUILD COLOURED RESILIENCE IMAGE (TWO-REGIME)
+//===========================================================================
+
+var resilNormal = resilience.updateMask(isOvershot.not());
+var resilOvershoot = ee.Image(1).divide(resilience.add(0.01))
+                      .updateMask(isOvershot);
+
+var resilNormalColoured = resilNormal.visualize({
+  min: 0, max: 5,
+  palette: ['8b0000','d73027','fc8d59','fee090',
+            'ffffff',
+            'd9ef8b','91cf60','52b788','2d6a4f']
+});
+
+var resilOvershootColoured = resilOvershoot.visualize({
+  min: 0, max: 5,
+  palette: ['c7e9f0','74c2e1','2196f3','1565c0','0d2b6e']
+});
+
+var resilMixed = ee.ImageCollection([
+  resilNormalColoured,
+  resilOvershootColoured
+]).mosaic();
+
+//===========================================================================
+//                          7. EXPORT TO DRIVE
+//===========================================================================
+
+Export.image.toDrive({
+  image         : resistanceColoured,
+  description   : 'drought_resistance_map',
+  folder        : 'Forest_Sensitivity_Maps',
+  fileNamePrefix: 'drought_resistance_MP',
+  region        : aoi,
+  scale         : EXPORT_SCALE,
+  crs           : 'EPSG:4326',
+  maxPixels     : 1e10
+});
+
+Export.image.toDrive({
+  image         : resilMixed,
+  description   : 'drought_resilience_map',
+  folder        : 'Forest_Sensitivity_Maps',
+  fileNamePrefix: 'drought_resilience_MP',
+  region        : aoi,
+  scale         : EXPORT_SCALE,
+  crs           : 'EPSG:4326',
+  maxPixels     : 1e10
+});
+
+print('Check band counts above first.');
+print('If all show 1 band — submit both tasks from Tasks tab.');
+print('Files will appear in Google Drive > Forest_Sensitivity_Maps');
