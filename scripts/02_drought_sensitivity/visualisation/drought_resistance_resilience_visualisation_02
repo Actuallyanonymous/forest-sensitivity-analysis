@@ -1,0 +1,291 @@
+/**
+ * Drought Resistance & Resilience Visualization
+ * Uses pre-exported coloured assets — no heavy recomputation
+ */
+
+//This is to visualise the color exports , you'll first have to download the exports from dirve and upload those .tif images in the GEE assets,
+//Then use this script to visualize them. 
+
+//1. CONFIGURATION
+
+
+var RESISTANCE_ASSET  = 'projects/cs5-pushkinmangla/assets/drought_resistance_MP';
+var RESILIENCE_ASSET  = 'projects/cs5-pushkinmangla/assets/drought_resilience_MP';
+var DROUGHT_ASSET     = 'projects/cs5-pushkinmangla/assets/MP_Drought_Metrics';
+
+
+//2. LOAD ASSETS & MAP SETUP
+
+
+ui.root.clear();
+
+var mapPanel = ui.Map();
+mapPanel.setCenter(78.5, 23.0, 7);
+mapPanel.setOptions('HYBRID');
+mapPanel.style().set({cursor: 'crosshair'});
+
+// Load pre-coloured RGB assets
+var resistanceRGB = ee.Image(RESISTANCE_ASSET);
+var resilienceRGB = ee.Image(RESILIENCE_ASSET);
+
+// Load raw values for click handler
+var droughtImg = ee.Image(DROUGHT_ASSET).rename(['resistance', 'resilience']);
+var resistance = droughtImg.select('resistance');
+var resilience = droughtImg.select('resilience');
+
+// MP boundary
+var mpBound = ee.Image().paint({
+  featureCollection: ee.FeatureCollection('FAO/GAUL/2015/level1')
+    .filter(ee.Filter.eq('ADM1_NAME', 'Madhya Pradesh')),
+  color: 1, width: 2
+});
+mapPanel.addLayer(mpBound, {palette: ['ffff00'], opacity: 0.8}, 'MP boundary', true);
+
+
+//3. UI WIDGETS
+
+
+var header = ui.Label('Drought Sensitivity Monitor', {
+  fontSize: '18px', fontWeight: 'bold',
+  color: '#8b2500', margin: '10px 8px 2px 8px'
+});
+
+var subHeader = ui.Label('Madhya Pradesh · 2004–2022 · Forest pixels only', {
+  fontSize: '12px', color: '#666666',
+  margin: '0px 8px 10px 8px'
+});
+
+var layerLabel = ui.Label('Display metric', {
+  fontWeight: 'bold', fontSize: '13px',
+  color: '#333333', margin: '6px 8px 4px 8px'
+});
+
+var layerSelect = ui.Select({
+  items: ['Drought resistance', 'Drought resilience'],
+  value: 'Drought resistance',
+  style: {stretch: 'horizontal', margin: '0px 8px 8px 8px'}
+});
+
+var opacityLabel = ui.Label('Opacity', {
+  fontWeight: 'bold', fontSize: '13px',
+  color: '#333333', margin: '6px 8px 4px 8px'
+});
+
+var opacitySlider = ui.Slider({
+  min: 0, max: 1, value: 0.9, step: 0.05,
+  style: {stretch: 'horizontal', margin: '0px 8px 8px 8px'}
+});
+
+var legendLabel = ui.Label('Legend', {
+  fontWeight: 'bold', fontSize: '13px',
+  color: '#333333', margin: '10px 8px 4px 8px'
+});
+
+var legendPanel = ui.Panel({
+  style: {margin: '0px 8px 8px 8px', padding: '4px'}
+});
+
+var infoLabel = ui.Label('Click a point on the map', {
+  fontWeight: 'bold', fontSize: '13px',
+  color: '#333333', margin: '10px 8px 4px 8px'
+});
+
+var infoPanel = ui.Panel({
+  style: {margin: '0px 8px 4px 8px', padding: '4px',
+          border: '1px solid #dddddd'}
+});
+infoPanel.add(ui.Label('Values will appear here after clicking.', {
+  fontSize: '12px', color: '#999999', margin: '4px'
+}));
+
+var aboutLabel = ui.Label('About', {
+  fontWeight: 'bold', fontSize: '13px',
+  color: '#333333', margin: '10px 8px 4px 8px'
+});
+
+var aboutText = ui.Label(
+  'Resistance = Yn / |Ye - Yn|\n' +
+  'Higher = smaller NDVI deviation = forest held up better.\n\n' +
+  'Resilience = |Ye - Yn| / |Ye+1 - Yn|\n' +
+  'Two-regime colour scale:\n' +
+  '  Ye+1 <= Yn: red(0) → white(1) → green(∞)\n' +
+  '  Ye+1 > Yn:  light blue(∞) → dark blue(0)\n' +
+  '  Dark blue = strong overshoot = best recovery.\n\n' +
+  'Forest pixels only · Averaged across drought years\n' +
+  'SPEI-12 < -1.0 · Period: 2004–2022 · 30m',
+  {fontSize: '11px', color: '#666666', whiteSpace: 'pre',
+   margin: '0px 8px 10px 8px'}
+);
+
+var leftPanel = ui.Panel({
+  widgets: [
+    header, subHeader,
+    ui.Panel([ui.Label('─────────────────', {color: '#dddddd', margin: '0 8px'})]),
+    layerLabel, layerSelect,
+    opacityLabel, opacitySlider,
+    ui.Panel([ui.Label('─────────────────', {color: '#dddddd', margin: '0 8px'})]),
+    legendLabel, legendPanel,
+    ui.Panel([ui.Label('─────────────────', {color: '#dddddd', margin: '0 8px'})]),
+    infoLabel, infoPanel,
+    ui.Panel([ui.Label('─────────────────', {color: '#dddddd', margin: '0 8px'})]),
+    aboutLabel, aboutText
+  ],
+  style: {width: '300px', padding: '0px', backgroundColor: '#fafafa'},
+  layout: ui.Panel.Layout.flow('vertical')
+});
+
+
+//4. LEGEND BUILDER
+
+
+function makeLegendBar(palette, title, lowLabel, highLabel) {
+  var panel = ui.Panel({style: {margin: '2px 0px'}});
+  panel.add(ui.Label(title, {
+    fontSize: '10px', fontWeight: 'bold',
+    color: '#444444', margin: '4px 0px 2px 0px'
+  }));
+  panel.add(ui.Thumbnail({
+    image: ee.Image.pixelLonLat().select('longitude')
+      .unitScale(-180, 180)
+      .visualize({min: 0, max: 1, palette: palette}),
+    params: {bbox: '-180,-10,180,10', dimensions: '200x18'},
+    style: {stretch: 'horizontal', margin: '2px 0px', height: '18px'}
+  }));
+  panel.add(ui.Panel([
+    ui.Label(lowLabel,  {fontSize: '9px', color: '#666666', margin: '0px'}),
+    ui.Label(highLabel, {
+      fontSize: '9px', color: '#666666',
+      textAlign: 'right', stretch: 'horizontal', margin: '0px'
+    })
+  ], ui.Panel.Layout.flow('horizontal'), {stretch: 'horizontal'}));
+  return panel;
+}
+
+
+//5. LAYER RENDERER
+
+
+function renderLayer() {
+  var chosen  = layerSelect.getValue();
+  var opacity = opacitySlider.getValue();
+
+  while (mapPanel.layers().length() > 1) {
+    mapPanel.layers().remove(mapPanel.layers().get(1));
+  }
+  legendPanel.clear();
+
+  if (chosen === 'Drought resistance') {
+
+    mapPanel.addLayer(resistanceRGB, {}, 'Drought resistance', true, opacity);
+
+    legendPanel.add(makeLegendBar(
+      ['8b0000','d73027','fc8d59','fee090','ffffbf','d9ef8b','91cf60','1a9850','006837'],
+      'Resistance  (0 → 10+)',
+      'Low — strongly affected',
+      'High — barely affected'
+    ));
+
+  } else {
+
+    mapPanel.addLayer(resilienceRGB, {}, 'Drought resilience', true, opacity);
+
+    legendPanel.add(ui.Label('Drought resilience (mean 2004–2022)', {
+      fontSize: '11px', fontWeight: 'bold',
+      color: '#444444', margin: '2px 0px 6px 0px'
+    }));
+
+    legendPanel.add(makeLegendBar(
+      ['8b0000','d73027','fc8d59','fee090','ffffff','d9ef8b','91cf60','52b788','2d6a4f'],
+      'Ye+1 ≤ Yn  (did not cross baseline)',
+      'Red: worsened (M→0)',
+      'Green: recovered (M→∞)'
+    ));
+
+    legendPanel.add(ui.Panel({style: {height: '6px'}}));
+
+    legendPanel.add(makeLegendBar(
+      ['c7e9f0','74c2e1','2196f3','1565c0','0d2b6e'],
+      'Ye+1 > Yn  (overshot above baseline)',
+      'Light: just crossed (M→∞)',
+      'Dark blue: strong overshoot (M→0)'
+    ));
+  }
+}
+
+
+//6. CLICK HANDLER
+
+
+mapPanel.onClick(function(coords) {
+  infoPanel.clear();
+
+  var point = ee.Geometry.Point([coords.lon, coords.lat]);
+
+  infoPanel.add(ui.Label(
+    'Lat: ' + coords.lat.toFixed(4) + '  Lon: ' + coords.lon.toFixed(4),
+    {fontSize: '11px', color: '#444444', margin: '4px'}
+  ));
+
+  droughtImg.sample({region: point, scale: 30, geometries: false})
+    .evaluate(function(result) {
+      if (result && result.features && result.features.length > 0) {
+        var p     = result.features[0].properties;
+        var resist = p.resistance;
+        var resil  = p.resilience;
+
+        var resistInterp = resist !== null ?
+          (resist > 5  ? 'Very high — barely affected during drought' :
+           resist > 2  ? 'Moderate — some NDVI deviation during drought' :
+                         'Low — strongly affected during drought') : null;
+
+        var resilInterp = resil !== null ?
+          (resil > 3   ? 'Strong recovery toward or above baseline' :
+           resil > 1   ? 'Partial recovery — Ye+1 closer to baseline than Ye' :
+           resil > 0.5 ? 'Mild further decline — close to event year level' :
+                         'Significant continued decline below event year') : null;
+
+        infoPanel.add(ui.Label('── Drought metrics ──', {
+          fontSize: '11px', fontWeight: 'bold',
+          color: '#8b2500', margin: '6px 4px 2px 4px'
+        }));
+        infoPanel.add(ui.Label(
+          'Resistance: ' + (resist !== null ? resist.toFixed(3) : 'N/A'),
+          {fontSize: '12px', color: '#333333', margin: '2px 4px'}
+        ));
+        if (resistInterp) infoPanel.add(ui.Label(resistInterp, {
+          fontSize: '11px', color: '#666666', margin: '0px 4px 6px 4px'
+        }));
+        infoPanel.add(ui.Label(
+          'Resilience: ' + (resil !== null ? resil.toFixed(3) : 'N/A'),
+          {fontSize: '12px', color: '#333333', margin: '2px 4px'}
+        ));
+        if (resilInterp) infoPanel.add(ui.Label(resilInterp, {
+          fontSize: '11px', color: '#666666', margin: '0px 4px 4px 4px'
+        }));
+
+      } else {
+        infoPanel.add(ui.Label(
+          'No forest data at this point.\nOnly forest pixels have values.',
+          {fontSize: '12px', color: '#999999', margin: '4px', whiteSpace: 'pre'}
+        ));
+      }
+    });
+});
+
+
+//7. CALLBACKS & ASSEMBLE
+
+
+layerSelect.onChange(renderLayer);
+opacitySlider.onChange(renderLayer);
+
+var splitPanel = ui.SplitPanel({
+  firstPanel:  leftPanel,
+  secondPanel: mapPanel,
+  orientation: 'horizontal',
+  wipe:        false,
+  style:       {stretch: 'both'}
+});
+
+ui.root.add(splitPanel);
+renderLayer();
