@@ -7,12 +7,16 @@
  *
  * Sources:
  *   1. GLC-FCS30D (2003–2022)
- *   2. Dynamic World (2015–2022)
- *   3. IndiaSat LULC (2017–2022), Core-stack. 
+ *   2. Dynamic World (2015–present)
+ *   3. IndiaSat LULC (2017–2024), Core-stack. 
  *
- * Union logic: majority vote among active datasets per year.
+ *  Union logic: majority vote among active datasets per year.
+ *   GLC-FCS30D: 2003–2022 (classes 51–92)
+ *   Dynamic World: 2015–present (class 1 = Trees)
+ *   IndiaSat LULC: 2017–2024 (class 6 = Trees)
+ *
  * Temporal correction: ±2 year window as used in other places too by the team.
- */
+ **/
 
 
 //CONFIGURATION :=
@@ -68,7 +72,9 @@ var indiaSatList = [
   ee.Image('projects/corestack-datasets/assets/datasets/LULC_v3_river_basin/pan_india_lulc_v3_2019_2020').set('year', 2019),
   ee.Image('projects/corestack-datasets/assets/datasets/LULC_v3_river_basin/pan_india_lulc_v3_2020_2021').set('year', 2020),
   ee.Image('projects/corestack-datasets/assets/datasets/LULC_v3_river_basin/pan_india_lulc_v3_2021_2022').set('year', 2021),
-  ee.Image('projects/corestack-datasets/assets/datasets/LULC_v3_river_basin/pan_india_lulc_v3_2022_2023').set('year', 2022)
+  ee.Image('projects/corestack-datasets/assets/datasets/LULC_v3_river_basin/pan_india_lulc_v3_2022_2023').set('year', 2022),
+  ee.Image('projects/corestack-datasets/assets/datasets/LULC_v3_river_basin/pan_india_lulc_v3_2023_2024').set('year', 2023),
+  ee.Image('projects/corestack-datasets/assets/datasets/LULC_v3_river_basin/pan_india_lulc_v3_2024_2025').set('year', 2024),
 ];
 var indiaSatCol = ee.ImageCollection(indiaSatList);
 
@@ -92,11 +98,15 @@ var years = ee.List.sequence(START_YEAR, END_YEAR);
 var annualTreeCoverMasks = ee.ImageCollection(years.map(function(year) {
   year = ee.Number(year);
 
-  // GLC — always active, classes 51–92 are forests
-  var bandName = ee.String('b').cat(year.subtract(1999).format('%.0f'));
-  var glcMask  = glcMosaic.select(bandName).gte(51).and(
-                 glcMosaic.select(bandName).lte(92)).rename('tree');
-  var proj     = glcMask.projection();
+  // GLC — active only up to 2022, classes 51–92 are forests
+var bandName = ee.String('b').cat(year.subtract(1999).format('%.0f'));
+var glcMask = ee.Image(ee.Algorithms.If(
+  year.lte(2022),
+  glcMosaic.select(bandName).gte(51).and(
+    glcMosaic.select(bandName).lte(92)),
+  ee.Image(0)
+)).rename('tree');
+var proj = glcMask.projection();
 
   // Dynamic World — active from 2015
   var dwYear = dwCol.filter(ee.Filter.calendarRange(year, year, 'year')).select('label');
@@ -110,10 +120,11 @@ var annualTreeCoverMasks = ee.ImageCollection(years.map(function(year) {
   var indiaSatMask = getIndiaSatMask(year).reproject({crs: proj, scale: 30});
 
   // Majority vote
+  var glcActive      = ee.Algorithms.If(year.lte(2022), 1, 0);
   var forestSum      = glcMask.unmask(0).add(dwMask.unmask(0)).add(indiaSatMask.unmask(0));
   var dwActive       = ee.Algorithms.If(year.gte(2015), 1, 0);
-  var indiasatActive = ee.Algorithms.If(year.gte(2017), 1, 0);
-  var activeDatasets = ee.Number(1).add(dwActive).add(indiasatActive);
+  var indiasatActive = ee.Algorithms.If(year.gte(2017).and(year.lte(2024)), 1, 0);
+  var activeDatasets = ee.Number(glcActive).add(dwActive).add(indiasatActive);
   var requiredVotes  = ee.Algorithms.If(activeDatasets.eq(1), 1, 2);
   var hybridMask     = forestSum.gte(ee.Number(requiredVotes));
 
