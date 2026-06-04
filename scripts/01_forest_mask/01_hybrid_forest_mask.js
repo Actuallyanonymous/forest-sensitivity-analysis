@@ -77,8 +77,7 @@ var getIndiaSatMask = function(year) {
   return ee.Image(ee.Algorithms.If(
     img,
     ee.Image(img).select('predicted_label')
-      .eq(11).or(ee.Image(img).select('predicted_label').eq(12))
-      .or(ee.Image(img).select('predicted_label').eq(14))
+      .eq(6)
       .unmask(0),
     ee.Image(0)
   )).rename('tree');
