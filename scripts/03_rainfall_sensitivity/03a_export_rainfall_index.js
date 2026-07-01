@@ -1,20 +1,21 @@
 /**
  * Forest Sensitivity Analysis Pipeline — Script 3a
- * Heavy Rainfall Index Export
+ * Heavy Rainfall Index Export (Wet-Days Only Threshold)
  *
  * Computes two quantities per pixel per year and exports as a single
  * multiband asset — one band per year for each quantity:
  *
- *   Hm_{year}     = annual sum of precipitation on heavy days
- *   zScore_{year} = z-score of Hm relative to the full period mean/stddev
+ * Hm_{year}     = annual sum of precipitation on heavy days
+ * zScore_{year} = z-score of Hm relative to the full period mean/stddev
  *
- * Heavy day definition: daily precipitation > long-term 95th percentile (CHIRPS)
+ * Heavy day definition: daily precipitation > long-term 95th percentile 
+ * of WET DAYS ONLY (> 1mm) (CHIRPS)
  * Z-score computed across all years in the period.
  *
  * Output asset bands:
- *   Hm_2004, Hm_2005, ..., Hm_2023      (19 bands)
- *   zScore_2004, ..., zScore_2023        (19 bands)
- *   Total: 38 bands
+ * Hm_2004, Hm_2005, ..., Hm_2023      (19 bands)
+ * zScore_2004, ..., zScore_2023        (19 bands)
+ * Total: 38 bands
  *
  * This asset is the direct input to Script 3b, analogous to how
  * SPEI assets are the input to Script 2 (drought).
@@ -30,8 +31,8 @@ var STATE_NAME      = 'Madhya Pradesh';
 var START_YEAR      = 2004;
 var END_YEAR        = 2022;
 
-var OUTPUT_ASSET_ID = 'projects/cs5-pushkinmangla/assets/MP_Rain_Index';
-var OUTPUT_DESC     = 'MP_Rain_Index';
+var OUTPUT_ASSET_ID = 'projects/cs5-pushkinmangla/assets/MP_Rain_Index_Wet95';
+var OUTPUT_DESC     = 'MP_Rain_Index_Wet95';
 
 //===========================================================================
 //                          2. AOI
@@ -54,8 +55,12 @@ var chirps = ee.ImageCollection('UCSB-CHG/CHIRPS/DAILY')
 
 var proj = chirps.first().projection();
 
-// Long-term 95th percentile — defines what counts as a heavy day
-var p95 = chirps.reduce(ee.Reducer.percentile([95]))
+// Long-term 95th percentile of WET DAYS ONLY (> 1mm)
+var p95 = chirps.map(function(img) {
+                  // Mask out days with 1mm or less
+                  return img.updateMask(img.gt(1)); 
+                })
+                .reduce(ee.Reducer.percentile([95]))
                 .setDefaultProjection(proj)
                 .rename('p95');
 
