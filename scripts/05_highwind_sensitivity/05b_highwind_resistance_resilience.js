@@ -46,19 +46,14 @@ var treeMeta  = ee.Image(TREE_COVER_ASSET);
 var startYear = treeMeta.select('start_year');
 var endYear   = treeMeta.select('end_year');
 
-// Load windspeed index from single multiband asset (Script 4a output)
+// Load windspeed index from single multiband asset (Script 5a output)
 var windIndex_raw = ee.Image(WIND_INDEX_ASSET);
-var windBandNames = [];
-for (var yr = START_YEAR; yr <= END_YEAR; yr++) {
-  windBandNames.push('WSmax_' + yr);
-}
-var windIndex = windIndex_raw.rename(windBandNames);
 
-// Build per-year windspeed collection
+// Build per-year windspeed collection by selecting directly from the raw asset
 var wsImages = [];
 for (var y = START_YEAR; y <= END_YEAR; y++) {
   wsImages.push(
-    windIndex.select('WSmax_' + y)
+    windIndex_raw.select('WSmax_' + y)
       .rename('windspeed')
       .set('year', y)
   );
