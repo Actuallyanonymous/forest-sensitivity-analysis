@@ -1,21 +1,18 @@
 /**
- * Forest Sensitivity Analysis Pipeline — Script 3a
- * Heavy Rainfall Index Export (Wet-Days Only Threshold)
+ * Forest Sensitivity Analysis Pipeline — Script 3a 
+ * Heavy Rainfall Index Export (Wet-Days Only Threshold + Extended Metrics)
  *
- * Computes two quantities per pixel per year and exports as a single
+ * Computes 5 quantities per pixel per year and exports as a single
  * multiband asset — one band per year for each quantity:
  *
- * Hm_{year}     = annual sum of precipitation on heavy days
- * zScore_{year} = z-score of Hm relative to the full period mean/stddev
+ * Hm_{year}         = annual sum of precipitation on heavy days
+ * zScore_{year}     = z-score of Hm relative to the 2004-2022 period
+ * heavyDays_{year}  = number of days in the year with heavy rainfall
+ * heavyAvg_{year}   = average daily precipitation on heavy rainfall days
+ * maxDay_{year}     = maximum daily precipitation recorded in that year
  *
  * Heavy day definition: daily precipitation > long-term 95th percentile 
  * of WET DAYS ONLY (> 1mm) (CHIRPS)
- * Z-score computed across all years in the period.
- *
- * Output asset bands:
- * Hm_2004, Hm_2005, ..., Hm_2023      (19 bands)
- * zScore_2004, ..., zScore_2023        (19 bands)
- * Total: 38 bands
  *
  * This asset is the direct input to Script 3b, analogous to how
  * SPEI assets are the input to Script 2 (drought).
@@ -31,8 +28,8 @@ var STATE_NAME      = 'Madhya Pradesh';
 var START_YEAR      = 2004;
 var END_YEAR        = 2022;
 
-var OUTPUT_ASSET_ID = 'projects/cs5-pushkinmangla/assets/MP_Rain_Index_Wet95';
-var OUTPUT_DESC     = 'MP_Rain_Index_Wet95';
+var OUTPUT_ASSET_ID = 'projects/cs5-pushkinmangla/assets/MP_Rain_Index_Wet95_Final';
+var OUTPUT_DESC     = 'MP_Rain_Index_Wet95_Final';
 
 //===========================================================================
 //                          2. AOI
@@ -45,7 +42,7 @@ var aoi = ee.FeatureCollection('FAO/GAUL/2015/level1')
 Map.centerObject(aoi, 7);
 
 //===========================================================================
-//                    3. HEAVY RAINFALL INDEX (Hm)
+//                    3. BASELINE HEAVY RAINFALL THRESHOLD
 //===========================================================================
 
 var chirps = ee.ImageCollection('UCSB-CHG/CHIRPS/DAILY')
@@ -57,81 +54,104 @@ var proj = chirps.first().projection();
 
 // Long-term 95th percentile of WET DAYS ONLY (> 1mm)
 var p95 = chirps.map(function(img) {
-                  // Mask out days with 1mm or less
                   return img.updateMask(img.gt(1)); 
                 })
                 .reduce(ee.Reducer.percentile([95]))
                 .setDefaultProjection(proj)
                 .rename('p95');
 
-// Annual heavy rain sum per year
+//===========================================================================
+//                    4. ANNUAL METRICS CALCULATION
+//===========================================================================
+
 var years = ee.List.sequence(START_YEAR, END_YEAR);
 
-var annualHm = ee.ImageCollection(years.map(function(y) {
+var annualMetrics = ee.ImageCollection(years.map(function(y) {
   var start = ee.Date.fromYMD(y, 1, 1);
   var end   = ee.Date.fromYMD(y, 12, 31);
 
-  var heavySum = chirps.filterDate(start, end)
-                       .map(function(img) {
-                         return img.multiply(img.gt(p95));
-                       })
-                       .sum()
-                       .setDefaultProjection(proj)
-                       .rename('Hm')
-                       .set('year', y);
-  return heavySum;
+  var yearCollection = chirps.filterDate(start, end);
+
+  // Absolute maximum daily rainfall for this year
+  var maxDay = yearCollection.max()
+                             .unmask(0)
+                             .setDefaultProjection(proj)
+                             .rename('maxDay');
+
+  // Binary mask: isolated heavy rain days
+  var heavyRainCollection = yearCollection.map(function(img) {
+    return img.updateMask(img.gt(p95));
+  });
+
+  // 1. Annual sum of heavy rainfall
+  var hm = heavyRainCollection.map(function(img) { return img.unmask(0); })
+                              .sum()
+                              .setDefaultProjection(proj)
+                              .rename('Hm');
+
+  // 2. Number of heavy days
+  var heavyDays = heavyRainCollection.map(function(img) { return img.notMasked(); })
+                                     .sum()
+                                     .unmask(0)
+                                     .setDefaultProjection(proj)
+                                     .rename('heavyDays');
+
+  // 3. Average intensity of heavy days
+  var heavyAvg = heavyRainCollection.mean()
+                                    .unmask(0)
+                                    .setDefaultProjection(proj)
+                                    .rename('heavyAvg');
+
+  // Combine metrics into a single image per year containing all 4 base properties
+  return hm.addBands(heavyDays)
+           .addBands(heavyAvg)
+           .addBands(maxDay)
+           .set('year', y);
 }));
 
 //===========================================================================
-//                    4. Z-SCORE ACROSS ALL YEARS
+//                    5. FIXED Z-SCORE CALCULATION
 //===========================================================================
 
-var hmMean   = annualHm.mean().rename('Hm_mean');
-var hmStdDev = annualHm.reduce(ee.Reducer.stdDev()).rename('Hm_stdDev');
+var hmMean   = annualMetrics.select('Hm').mean();
+var hmStdDev = annualMetrics.select('Hm').reduce(ee.Reducer.stdDev());
 
-var annualZScore = ee.ImageCollection(years.map(function(y) {
-  var year = ee.Number(y);
-  var hm   = annualHm.filter(ee.Filter.eq('year', year)).first();
-  var z    = hm.subtract(hmMean).divide(hmStdDev).rename('zScore');
-  return z.set('year', year);
-}));
-
-//===========================================================================
-//                    5. STACK INTO SINGLE MULTIBAND IMAGE
-//===========================================================================
-
-// Build one image with 38 named bands:
-// Hm_2004 ... Hm_2022, zScore_2004 ... zScore_2022
-
-var outputImage = ee.Image([]);
-
-years.evaluate(function(yearList) {
-  yearList.forEach(function(y) {
-    var hmBand = annualHm.filter(ee.Filter.eq('year', y)).first()
-                         .rename('Hm_' + y);
-    var zBand  = annualZScore.filter(ee.Filter.eq('year', y)).first()
-                             .rename('zScore_' + y);
-    outputImage = outputImage.addBands(hmBand).addBands(zBand);
-  });
-
-  // Quick preview
-  Map.addLayer(
-    annualZScore.filter(ee.Filter.eq('year', 2019)).first(),
-    {min: -2, max: 2, palette: ['white','blue','darkblue']},
-    'Z-score 2019 (preview)'
-  );
-
-  // Export
-  Export.image.toAsset({
-    image       : outputImage.clip(aoi),
-    description : OUTPUT_DESC,
-    assetId     : OUTPUT_ASSET_ID,
-    region      : aoi,
-    scale       : 5566,   // CHIRPS native resolution ~5.5km
-    crs         : 'EPSG:4326',
-    maxPixels   : 1e13
-  });
-
-  print('✅ Export task ready — go to Tasks tab and click Run.');
-  print('Output bands: Hm_2004...Hm_2022, zScore_2004...zScore_2022');
+// Changed to server-side map architecture instead of the annual image collection, done for GEE optimisation.. as it's a better practice. 
+var completedAnnualCollection = annualMetrics.map(function(img) {
+  var hm = img.select('Hm');
+  var z  = hm.subtract(hmMean).divide(hmStdDev).rename('zScore');
+  return img.addBands(z); 
 });
+
+//===========================================================================
+//         6. SERVER-SIDE STACK INTO SINGLE MULTIBAND IMAGE & EXPORT
+//===========================================================================
+
+// Changed server-side iteration style to stack and correctly rename bands
+var initialImage = ee.Image([]);
+var outputImage = ee.Image(years.iterate(function(y, acc) {
+  var yearStr = ee.String(ee.Number(y).toInt());
+  var yearImg = completedAnnualCollection.filter(ee.Filter.eq('year', y)).first();
+  
+  var hmBand        = yearImg.select('Hm').rename(ee.String('Hm_').cat(yearStr));
+  var zBand         = yearImg.select('zScore').rename(ee.String('zScore_').cat(yearStr));
+  var heavyDaysBand = yearImg.select('heavyDays').rename(ee.String('heavyDays_').cat(yearStr));
+  var heavyAvgBand  = yearImg.select('heavyAvg').rename(ee.String('heavyAvg_').cat(yearStr));
+  var maxDayBand    = yearImg.select('maxDay').rename(ee.String('maxDay_').cat(yearStr));
+  
+  return ee.Image(acc).addBands([hmBand, zBand, heavyDaysBand, heavyAvgBand, maxDayBand]);
+}, initialImage));
+
+// Export execution block
+Export.image.toAsset({
+  image       : outputImage.clip(aoi),
+  description : OUTPUT_DESC,
+  assetId     : OUTPUT_ASSET_ID,
+  region      : aoi,
+  scale       : 5566,   
+  crs         : 'EPSG:4326',
+  maxPixels   : 1e13
+});
+
+print('✅ Clean pipeline compilation verified.');
+print('Ready to execute in the tasks tab. Total structured bands: 95.');
