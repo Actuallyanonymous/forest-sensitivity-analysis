@@ -43,25 +43,14 @@ var treeMeta      = ee.Image(TREE_COVER_ASSET);
 var startYearTree = treeMeta.select('start_year');
 var endYearTree   = treeMeta.select('end_year');
 
-var rainIndex_raw = ee.Image(RAIN_INDEX_ASSET);
-var rainBandNames = [];
-for (var yr = START_YEAR; yr <= END_YEAR; yr++) {
-  rainBandNames.push('Hm_' + yr);
-  rainBandNames.push('zScore_' + yr);
-}
-var rainIndex = rainIndex_raw.rename(rainBandNames);
+var rainIndex = ee.Image(RAIN_INDEX_ASSET);
 
-var hmCol_list     = [];
 var zScoreCol_list = [];
 for (var y = START_YEAR; y <= END_YEAR; y++) {
-  hmCol_list.push(
-    rainIndex.select('Hm_' + y).rename('Hm').set('year', y)
-  );
   zScoreCol_list.push(
     rainIndex.select('zScore_' + y).rename('zScore').set('year', y)
   );
 }
-var hmCol     = ee.ImageCollection(hmCol_list);
 var zScoreCol = ee.ImageCollection(zScoreCol_list);
 
 // LANDSAT HARMONIZATION & kNDVI :=
