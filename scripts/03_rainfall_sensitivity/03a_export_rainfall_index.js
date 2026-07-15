@@ -90,7 +90,7 @@ var annualMetrics = ee.ImageCollection(years.map(function(y) {
                               .rename('Hm');
 
   // 2. Number of heavy days
-  var heavyDays = heavyRainCollection.map(function(img) { return img.notMasked(); })
+  var heavyDays = heavyRainCollection.map(function(img) { return img.mask(); })
                                      .sum()
                                      .unmask(0)
                                      .setDefaultProjection(proj)
