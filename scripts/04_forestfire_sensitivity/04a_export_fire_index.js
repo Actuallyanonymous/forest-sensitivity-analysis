@@ -79,7 +79,7 @@ var annualMetrics = ee.ImageCollection(years.map(function(y) {
                                  .rename('FRP');
 
   // 2. Number of fire days
-  var fireDays = fireDaysCollection.map(function(img) { return img.notMasked(); })
+  var fireDays = fireDaysCollection.map(function(img) { return img.mask(); })
                                    .sum()
                                    .unmask(0)
                                    .setDefaultProjection(proj)
