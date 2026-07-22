@@ -162,8 +162,6 @@ var kndviNonDrought = ee.ImageCollection(baselineYears.map(function(y) {
 
 var Yn_bar = kndviNonDrought.mean().rename('kndvi_baseline');
 
-var Yn_bar = kndviNonDrought.mean().rename('kndvi_baseline');
-
 // SIGNED RESISTANCE & RESILIENCE :=
 
 var metricsCol = ee.ImageCollection(analysisYears.map(function(y) {
