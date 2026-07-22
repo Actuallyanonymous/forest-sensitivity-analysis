@@ -29,6 +29,12 @@ var START_YEAR        = 2004;
 var END_YEAR          = 2022;
 var DROUGHT_THRESHOLD = -1.0;   // SPEI-12 below this = drought year
 
+// Fixed baseline window. This is independent of analysis START_YEAR/END_YEAR.
+// Please don't EVER change this once results are published, or old outputs will change when the pipeline timeline is extended.
+// This helps in fixing the Yn_bar (the average of the non-drought year NDVI) to a constant value. 
+var BASELINE_START_YEAR = 2004;  // SPEI has no data before 2004
+var BASELINE_END_YEAR   = 2024;
+
 // AOI :=
 
 var aoi = ee.FeatureCollection('FAO/GAUL/2015/level1')
@@ -52,9 +58,12 @@ for (var yn = 2004; yn <= 2023; yn++) {
 }
 var spei12_named = spei12_raw.rename(spei12_bandnames);
 
-// Build per-year SPEI collection
+// Building the per-year SPEI collection here. 
+var speiMinYear = Math.min(START_YEAR, BASELINE_START_YEAR);
+var speiMaxYear = Math.max(END_YEAR, BASELINE_END_YEAR);
+
 var speiImages = [];
-for (var y = START_YEAR; y <= END_YEAR; y++) {
+for (var y = speiMinYear; y <= speiMaxYear; y++) {
   speiImages.push(
     spei12_named.select('y' + y)
       .rename('spei')
@@ -125,15 +134,23 @@ var getAnnualKNDVI = function(year) {
 };
 
 // Load kNDVI for START_YEAR to END_YEAR+1 (need next year for resilience)
-var kndviYears = ee.List.sequence(START_YEAR, END_YEAR + 1);
+//Here this is also changed based on the baseline years. 
+var kndviMinYear = Math.min(START_YEAR, BASELINE_START_YEAR);
+var kndviMaxYear = Math.max(END_YEAR + 1, BASELINE_END_YEAR);
+
+var kndviYears = ee.List.sequence(kndviMinYear, kndviMaxYear);
 var kndviCol   = ee.ImageCollection(kndviYears.map(getAnnualKNDVI));
 
 // BASELINE kNDVI (Yn_bar) :=
 // Mean kNDVI across non-drought years only
 
+//the analaysis years will still remain the same , so if some internal year widtch is given like 2010-2018 for example
+//then too the baseline yn_bar would be same of the bigger normalization. But the analysis will be resulting only of the analyssi years.
 var analysisYears = ee.List.sequence(START_YEAR, END_YEAR);
 
-var kndviNonDrought = ee.ImageCollection(analysisYears.map(function(y) {
+var baselineYears = ee.List.sequence(BASELINE_START_YEAR, BASELINE_END_YEAR);
+
+var kndviNonDrought = ee.ImageCollection(baselineYears.map(function(y) {
   var year  = ee.Number(y);
   var kndvi = kndviCol.filter(ee.Filter.eq('year', year)).first();
   var spei  = speiCol.filter(ee.Filter.eq('year', year)).first()
@@ -142,6 +159,8 @@ var kndviNonDrought = ee.ImageCollection(analysisYears.map(function(y) {
   var isNonDrought = spei.gte(DROUGHT_THRESHOLD);
   return kndvi.updateMask(isNonDrought).set('year', year);
 }));
+
+var Yn_bar = kndviNonDrought.mean().rename('kndvi_baseline');
 
 var Yn_bar = kndviNonDrought.mean().rename('kndvi_baseline');
 
