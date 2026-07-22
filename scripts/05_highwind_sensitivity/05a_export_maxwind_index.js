@@ -48,7 +48,7 @@ Map.centerObject(aoi, 7);
 
 var era5Hourly = ee.ImageCollection('ECMWF/ERA5_LAND/HOURLY')
                     .filterBounds(aoi)
-                    .filterDate('2000-01-01', '2023-12-31')
+                    .filterDate('2000-01-01', ee.Date.fromYMD(END_YEAR, 12, 31))
                     .select(['u_component_of_wind_10m', 'v_component_of_wind_10m']);
 
 var proj = era5Hourly.first().projection();
