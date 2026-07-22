@@ -42,14 +42,6 @@ var WIND_THRESHOLD    = 15;
 // extend END_YEAR in the future, Yn_bar shifts a little, and that quietly
 // rewrites all my past resistance/resilience results too. So I'm freezing
 // this window separately.
-//
-// IMPORTANT: I'm capping this at 2022, not 2024 like my other baselines
-// (drought/rain/fire), because Script 5a — the windspeed index this script
-// depends on — has only been exported through 2022 so far. If I ever
-// extend Script 5a's END_YEAR to 2024 and re-export AP_Wind_Index, I can
-// bump this to 2024 to match, matching how I did it for rain (3a -> 3b).
-// Until then, trying to read WSmax_2023 or WSmax_2024 here would fail,
-// since those bands don't exist yet in AP_Wind_Index.
 var BASELINE_START_YEAR = 2004;
 var BASELINE_END_YEAR   = 2024;
 
