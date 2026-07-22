@@ -20,20 +20,29 @@
  * Requires: nothing — only public datasets (CHIRPS)
  */
 
-//===========================================================================
-//                          1. CONFIGURATION
-//===========================================================================
+
+
+// 1. CONFIGURATION
 
 var STATE_NAME      = 'Madhya Pradesh';
+
+//change these START_YEAR & END_YEAR for changing the analysis timeline . don't touch the baseline years, if not sure how this works.
 var START_YEAR      = 2004;
 var END_YEAR        = 2022;
+
+
+// Fixed baseline window for zScore normalization — independent of START_YEAR/END_YEAR.
+// Do NOT change this once results are published, or old zScore bands will drift
+// when the pipeline timeline is extended.
+var BASELINE_START_YEAR = 2004;
+var BASELINE_END_YEAR   = 2024;
 
 var OUTPUT_ASSET_ID = 'projects/cs5-pushkinmangla/assets/MP_Rain_Index_Wet95_Final';
 var OUTPUT_DESC     = 'MP_Rain_Index_Wet95_Final';
 
-//===========================================================================
-//                          2. AOI
-//===========================================================================
+
+
+//  2. AOI
 
 var aoi = ee.FeatureCollection('FAO/GAUL/2015/level1')
             .filter(ee.Filter.eq('ADM1_NAME', STATE_NAME))
@@ -41,13 +50,14 @@ var aoi = ee.FeatureCollection('FAO/GAUL/2015/level1')
 
 Map.centerObject(aoi, 7);
 
-//===========================================================================
-//                    3. BASELINE HEAVY RAINFALL THRESHOLD
-//===========================================================================
 
+
+// 3. BASELINE HEAVY RAINFALL THRESHOLD
+
+//extend this too if the pipeline is extended further. 
 var chirps = ee.ImageCollection('UCSB-CHG/CHIRPS/DAILY')
                .filterBounds(aoi)
-               .filterDate('2000-01-01', '2023-12-31')
+               .filterDate('2000-01-01', '2024-12-31')   // extend to cover BASELINE_END_YEAR
                .select('precipitation');
 
 var proj = chirps.first().projection();
@@ -60,13 +70,16 @@ var p95 = chirps.map(function(img) {
                 .setDefaultProjection(proj)
                 .rename('p95');
 
-//===========================================================================
-//                    4. ANNUAL METRICS CALCULATION
-//===========================================================================
 
-var years = ee.List.sequence(START_YEAR, END_YEAR);
 
-var annualMetrics = ee.ImageCollection(years.map(function(y) {
+
+// 4. ANNUAL METRICS CALCULATION
+
+var metricsMinYear = Math.min(START_YEAR, BASELINE_START_YEAR);
+var metricsMaxYear = Math.max(END_YEAR, BASELINE_END_YEAR);
+var metricsYears   = ee.List.sequence(metricsMinYear, metricsMaxYear);
+
+var annualMetrics = ee.ImageCollection(metricsYears.map(function(y) {
   var start = ee.Date.fromYMD(y, 1, 1);
   var end   = ee.Date.fromYMD(y, 12, 31);
 
@@ -109,12 +122,20 @@ var annualMetrics = ee.ImageCollection(years.map(function(y) {
            .set('year', y);
 }));
 
-//===========================================================================
-//                    5. FIXED Z-SCORE CALCULATION
-//===========================================================================
 
-var hmMean   = annualMetrics.select('Hm').mean();
-var hmStdDev = annualMetrics.select('Hm').reduce(ee.Reducer.stdDev());
+
+
+
+// 5. FIXED Z-SCORE CALCULATION
+
+var baselineYears = ee.List.sequence(BASELINE_START_YEAR, BASELINE_END_YEAR);
+
+var baselineMetrics = annualMetrics.filter(
+  ee.Filter.inList('year', baselineYears)
+);
+
+var hmMean   = baselineMetrics.select('Hm').mean();
+var hmStdDev = baselineMetrics.select('Hm').reduce(ee.Reducer.stdDev());
 
 // Changed to server-side map architecture instead of the annual image collection, done for GEE optimisation.. as it's a better practice. 
 var completedAnnualCollection = annualMetrics.map(function(img) {
@@ -123,13 +144,16 @@ var completedAnnualCollection = annualMetrics.map(function(img) {
   return img.addBands(z); 
 });
 
-//===========================================================================
-//         6. SERVER-SIDE STACK INTO SINGLE MULTIBAND IMAGE & EXPORT
-//===========================================================================
+
+
+
+// 6. SERVER-SIDE STACK INTO SINGLE MULTIBAND IMAGE & EXPORT
+
+var analysisYears = ee.List.sequence(START_YEAR, END_YEAR); // same as original `years`
 
 // Changed server-side iteration style to stack and correctly rename bands
 var initialImage = ee.Image([]);
-var outputImage = ee.Image(years.iterate(function(y, acc) {
+var outputImage = ee.Image(analysisYears.iterate(function(y, acc) {
   var yearStr = ee.String(ee.Number(y).toInt());
   var yearImg = completedAnnualCollection.filter(ee.Filter.eq('year', y)).first();
   
@@ -153,5 +177,5 @@ Export.image.toAsset({
   maxPixels   : 1e13
 });
 
-print('✅ Clean pipeline compilation verified.');
-print('Ready to execute in the tasks tab. Total structured bands: 95.');
+print('Clean pipeline compilation verified.');
+print('Ready to execute. Total structured bands: ' + analysisYears.length().multiply(5).getInfo());
