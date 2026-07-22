@@ -28,7 +28,7 @@ var STATE_NAME      = 'Madhya Pradesh';
 
 //change these START_YEAR & END_YEAR for changing the analysis timeline . don't touch the baseline years, if not sure how this works.
 var START_YEAR      = 2004;
-var END_YEAR        = 2022;
+var END_YEAR        = 2024;
 
 
 // Fixed baseline window for zScore normalization — independent of START_YEAR/END_YEAR.
