@@ -57,9 +57,9 @@ Map.centerObject(aoi, 7);
 //extend this too if the pipeline is extended further. 
 var chirps = ee.ImageCollection('UCSB-CHG/CHIRPS/DAILY')
                .filterBounds(aoi)
-               .filterDate('2000-01-01', '2024-12-31')   // extend to cover BASELINE_END_YEAR
+               .filterDate('2000-01-01', ee.Date.fromYMD(BASELINE_END_YEAR, 12, 31))
                .select('precipitation');
-
+//now here I have written BASELINE_END_YEAR so this won't be needed to change even if baseline year changes and peipeline extends, they'll go hand in hand . Yayy
 var proj = chirps.first().projection();
 
 // Long-term 95th percentile of WET DAYS ONLY (> 1mm)
