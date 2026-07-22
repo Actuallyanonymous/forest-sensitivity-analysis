@@ -24,7 +24,7 @@
 
 var STATE_NAME      = 'Andhra Pradesh';
 var START_YEAR      = 2004;
-var END_YEAR        = 2022;
+var END_YEAR        = 2024;
 
 // Set your wind speed threshold here (in m/s)
 var WIND_THRESHOLD  = 10.0; 
