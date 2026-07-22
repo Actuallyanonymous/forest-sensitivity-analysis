@@ -28,9 +28,30 @@ var OUTPUT_ASSET_ID   = 'projects/sura-496709/assets/AP_Wind_Metrics_Harmonized_
 var OUTPUT_DESC       = 'AP_Wind_Metrics_Harmonized_kNDVI';
 
 var STATE_NAME        = 'Andhra Pradesh';
+
+// These are the years I actually want windspeed-resistance results FOR.
+// If I want to extend my analysis later, I just change END_YEAR — nothing
+// else here needs touching.
 var START_YEAR        = 2004;
-var END_YEAR          = 2022;
-var WIND_THRESHOLD    = 15;   
+var END_YEAR          = 2024;
+var WIND_THRESHOLD    = 15;
+
+// Same fix as everywhere else in the pipeline (drought, rain, fire). Yn_bar
+// is my baseline — "what kNDVI normally looks like in a non-high-wind
+// year." If I compute it over analysisYears directly, then every time I
+// extend END_YEAR in the future, Yn_bar shifts a little, and that quietly
+// rewrites all my past resistance/resilience results too. So I'm freezing
+// this window separately.
+//
+// IMPORTANT: I'm capping this at 2022, not 2024 like my other baselines
+// (drought/rain/fire), because Script 5a — the windspeed index this script
+// depends on — has only been exported through 2022 so far. If I ever
+// extend Script 5a's END_YEAR to 2024 and re-export AP_Wind_Index, I can
+// bump this to 2024 to match, matching how I did it for rain (3a -> 3b).
+// Until then, trying to read WSmax_2023 or WSmax_2024 here would fail,
+// since those bands don't exist yet in AP_Wind_Index.
+var BASELINE_START_YEAR = 2004;
+var BASELINE_END_YEAR   = 2024;
 
 // AOI :=
 
@@ -49,9 +70,15 @@ var endYear   = treeMeta.select('end_year');
 // Load windspeed index from single multiband asset (Script 5a output)
 var windIndex_raw = ee.Image(WIND_INDEX_ASSET);
 
-// Build per-year windspeed collection by selecting directly from the raw asset
+// I need WSmax bands covering BOTH my analysis window and my baseline
+// window — whichever stretches further. Right now they're the same range
+// (2004-2022), so this doesn't change anything today, but it protects me
+// once the two windows stop lining up in the future.
+var wsMinYear = Math.min(START_YEAR, BASELINE_START_YEAR);
+var wsMaxYear = Math.max(END_YEAR, BASELINE_END_YEAR);
+
 var wsImages = [];
-for (var y = START_YEAR; y <= END_YEAR; y++) {
+for (var y = wsMinYear; y <= wsMaxYear; y++) {
   wsImages.push(
     windIndex_raw.select('WSmax_' + y)
       .rename('windspeed')
@@ -71,12 +98,11 @@ var oliETMIntercepts  = ee.Image.constant([-0.0055, -0.0008, -0.0021, -0.0163, -
 var prepL57 = function(image) {
   var qa   = image.select('QA_PIXEL');
   var mask = qa.bitwiseAnd(1 << 3).eq(0).and(qa.bitwiseAnd(1 << 4).eq(0));
-  
-  // Apply mask, select optical bands, and apply Collection 2 scale factors
+
   var scaled = image.updateMask(mask)
                     .select(['SR_B1', 'SR_B2', 'SR_B3', 'SR_B4', 'SR_B5', 'SR_B7'])
                     .multiply(0.0000275).add(-0.2);
-                    
+
   return scaled.rename(chastainBandNames).copyProperties(image, ["system:time_start"]);
 };
 
@@ -84,16 +110,14 @@ var prepL57 = function(image) {
 var prepL89 = function(image) {
   var qa   = image.select('QA_PIXEL');
   var mask = qa.bitwiseAnd(1 << 3).eq(0).and(qa.bitwiseAnd(1 << 4).eq(0));
-  
-  // Apply mask, select optical bands, and apply Collection 2 scale factors
+
   var scaled = image.updateMask(mask)
                     .select(['SR_B2', 'SR_B3', 'SR_B4', 'SR_B5', 'SR_B6', 'SR_B7'])
                     .multiply(0.0000275).add(-0.2)
                     .rename(chastainBandNames);
-                    
-  // Apply Chastain regression model (OLI -> ETM+)
+
   var harmonized = scaled.multiply(oliETMSlopes).add(oliETMIntercepts);
-  
+
   return harmonized.copyProperties(image, ["system:time_start"]);
 };
 
@@ -121,16 +145,28 @@ var getAnnualKNDVI = function(year) {
   return l89.merge(l57).median().set('year', year).rename('kndvi');
 };
 
-// Load kNDVI for START_YEAR to END_YEAR+1 (need next year for resilience)
-var kndviYears = ee.List.sequence(START_YEAR, END_YEAR + 1);
+// I need kNDVI images covering whichever is bigger: my baseline window, or
+// my analysis window PLUS ONE year (since resilience for my last analysis
+// year needs next-year kNDVI to compare against).
+var kndviMinYear = Math.min(START_YEAR, BASELINE_START_YEAR);
+var kndviMaxYear = Math.max(END_YEAR + 1, BASELINE_END_YEAR);
+
+var kndviYears = ee.List.sequence(kndviMinYear, kndviMaxYear);
 var kndviCol   = ee.ImageCollection(kndviYears.map(getAnnualKNDVI));
 
 // BASELINE kNDVI (Yn_bar) :=
 // Mean kNDVI across non-high-wind years only
 
+// This is my actual analysis window — the years I want results FOR.
+// Untouched, exactly as before.
 var analysisYears = ee.List.sequence(START_YEAR, END_YEAR);
 
-var kndviNonEvent = ee.ImageCollection(analysisYears.map(function(y) {
+// This is my frozen baseline window — the years I use to WORK OUT what
+// Yn_bar (my "normal" kNDVI reference) is, kept separate from
+// analysisYears on purpose.
+var baselineYears = ee.List.sequence(BASELINE_START_YEAR, BASELINE_END_YEAR);
+
+var kndviNonEvent = ee.ImageCollection(baselineYears.map(function(y) {
   var year  = ee.Number(y);
   var kndvi = kndviCol.filter(ee.Filter.eq('year', year)).first();
   var ws    = wsCol.filter(ee.Filter.eq('year', year)).first()
@@ -144,6 +180,8 @@ var Yn_bar = kndviNonEvent.mean().rename('kndvi_baseline');
 
 // SIGNED RESISTANCE & RESILIENCE :=
 
+// Unchanged — still only runs over analysisYears, just uses the frozen
+// Yn_bar from above instead of one that would silently drift.
 var metricsCol = ee.ImageCollection(analysisYears.map(function(y) {
   var year = ee.Number(y);
 
