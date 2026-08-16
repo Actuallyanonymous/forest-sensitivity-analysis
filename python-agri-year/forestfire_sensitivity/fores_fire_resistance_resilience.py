@@ -2,45 +2,52 @@ import ee
 from datetime import date
 
 from utilities.constants import AEZ
-from utilities.gee_utils import export_raster_asset_to_gee, is_gee_asset_exists, ee_initialize
-
-"""
- * Forest Sensitivity Analysis Pipeline — Fire Resistance & Resilience
- * Fire Shock Resistance & Resilience (Harmonized kNDVI + Signed Formulas)
- *
- * AGRICULTURAL YEAR CONVENTION:
- * Year `y` = Jul 1 of `y` -> Jun 30 of `y+1`, matching Scripts 1/3a/3b/fire_index.
- * kNDVI compositing windows, zScore band lookups, and the baseline (Yn_bar)
- * window are all on this convention. Tree-cover asset (Script 1) is also
- * ag-year now, so startYearTree/endYearTree comparisons against `year`
- * carry no fuzz.
- *
- * Signed resistance (both +ve and -ve events):
- * Resistance = Yn_bar / |Ye - Yn_bar| × sign(Ye - Yn_bar)
- *
- * Resilience computed ONLY when Ye < Yn_bar (negative effect years):
- * Resilience = |Ye - Yn_bar| / |Ye+1 - Yn_bar| × sign(Ye+1 - Yn_bar)
- *
- * Harmonization: Transforms Landsat 8/9 (OLI) to Landsat 5/7 (ETM+)
- * equivalent before computing kNDVI to eliminate sensor-shift bias.
- *
- * Requires:
- * - Forest mask asset (Script 1)
- * - Fire index asset (FRP > 30) — must have been exported with an
- *   end_year >= this script's zMaxYear (fire_index now enforces its
- *   start/end_year fully covers the baseline window, so this holds as
- *   long as fire_index's own defaults/args aren't narrowed).
-"""
+from utilities.gee_utils import (
+    ee_initialize,
+    is_gee_asset_exists,
+    export_raster_asset_to_gee,
+)
 
 
-def forest_fire_sensitivity(aez, start_year=2004, end_year=2024, gee_account_id=None):
+def generate_rainfall_resilience(
+    aez, start_year=2004, end_year=None, gee_account_id=None
+):
+    """
+    * Forest Sensitivity Analysis Pipeline — Script 3b
+    * Heavy Rainfall Resistance & Resilience (Harmonized kNDVI + Signed Formulas)
+    *
+    * AGRICULTURAL YEAR CONVENTION:
+    * Year `y` = Jul 1 of `y` -> Jun 30 of `y+1`, matching Script 3a.
+    * kNDVI compositing windows, zScore band lookups, and the baseline
+    * (Yn_bar) window are all on this convention.
+    *
+    * Tree-cover / forest mask asset (Script 1) is also ag-year now, so
+    * startYearTree/endYearTree comparisons below against `year` are on
+    * the same convention with no fuzz.
+    *
+    * Signed resistance (both +ve and -ve events):
+    * Resistance = Yn_bar / |Ye - Yn_bar| × sign(Ye - Yn_bar)
+    *
+    * Resilience computed ONLY when Ye < Yn_bar (negative effect years):
+    * Resilience = |Ye - Yn_bar| / |Ye+1 - Yn_bar| × sign(Ye+1 - Yn_bar)
+    *
+    * Harmonization: Transforms Landsat 8/9 (OLI) to Landsat 5/7 (ETM+)
+    * equivalent before computing kNDVI to eliminate sensor-shift bias.
+    *
+    * Requires:
+    * - Forest mask asset (Script 1)
+    * - Rainfall index asset (Script 3a) — must have been exported with an
+    *   end_year >= this script's zMaxYear, or the zScore_{y} band lookup
+    *   below will fail.
+    """
+
     ee_initialize(gee_account_id)
-
     TREE_COVER_ASSET = f"projects/corestack-datasets-alpha/assets/datasets/SPEI/Hybrid_Tree_AEZ_{aez}_{str(2004)}_{str(end_year)}"
+    RAIN_INDEX_ASSET = (
+        f"projects/corestack-datasets-alpha/assets/datasets/SPEI/rain_index_AEZ_{aez}"
+    )
 
-    FIRE_INDEX_ASSET = f"projects/corestack-datasets-alpha/assets/datasets/SPEI/fire_index_FRP30_AEZ_{aez}"
-
-    OUTPUT_DESC = f"fire_metrics_harmonized_kNDVI_AEZ_{aez}"
+    OUTPUT_DESC = f"Rain_Metrics_{aez}"  # f"Rain_Metrics_AEZ_{aez}"
     OUTPUT_ASSET_ID = (
         f"projects/corestack-datasets-alpha/assets/datasets/SPEI/{OUTPUT_DESC}"
     )
@@ -56,16 +63,23 @@ def forest_fire_sensitivity(aez, start_year=2004, end_year=2024, gee_account_id=
 
     Z_THRESHOLD = 1.0
 
-    # I'm using 2004-2024 to match the same baseline window I already locked
-    # in for drought (Script 2), rain (Script 3b), and the fire z-score
-    # itself (fire index script) — keeping all my baselines consistent with
-    # each other. These are ag-year labels now, same as everywhere else.
+    # Same frozen-baseline reasoning as Script 3a and Script 2 — Yn_bar (the
+    # "normal" kNDVI reference) must not shift every time the analysis
+    # window is extended, or already-published resistance/resilience
+    # numbers would silently drift.
+    #
+    # BASELINE_START_YEAR=2004 / BASELINE_END_YEAR=2024 mean the same
+    # ag-years here as in Script 3a: Jul 2004 -> Jun 2025 as the frozen
+    # normalization period. Kept identical on purpose so 3a's zScore
+    # baseline and 3b's kNDVI baseline stay aligned on the same years.
     BASELINE_START_YEAR = 2004
     BASELINE_END_YEAR = 2024
 
-    # zScoreCol needs bands through zMaxYear from the fire_index asset, and
+    aoi = ee.FeatureCollection(AEZ).filter(ee.Filter.eq("ae_regcode", aez)).geometry()
+
+    # zScoreCol needs bands up through zMaxYear from the 3a asset, and
     # kndviCol needs data one year further out than that for resilience on
-    # the final analysis year — same completeness reasoning as Script 3b.
+    # the final analysis year (see completeness guard below).
     zMinYear = min(start_year, BASELINE_START_YEAR)
     zMaxYear = max(end_year, BASELINE_END_YEAR)
 
@@ -83,34 +97,47 @@ def forest_fire_sensitivity(aez, start_year=2004, end_year=2024, gee_account_id=
             f"{date.today().isoformat()}. Reduce end_year."
         )
 
-    aoi = ee.FeatureCollection(AEZ).filter(ee.Filter.eq("ae_regcode", aez)).geometry()
-    # aoi = (
-    #     ee.FeatureCollection("projects/ext-datasets/assets/datasets/State_pan_india")
-    #     .filter(ee.Filter.eq("Name", "Odisha"))
-    #     .geometry()
-    # )
-    # Loading the assets :=
+    # Tree-mask asset names embed end_year and auto-version; rain-index
+    # asset names don't, and silently no-op on re-run unless deleted first
+    # (see is_gee_asset_exists guard in rainfall_index). That mismatch
+    # means it's easy to expand end_year, regenerate the tree mask, forget
+    # to regenerate rainfall_index, and end up reading a stale rain-index
+    # asset against a fresh tree-mask one. Fail loudly instead.
+    if not is_gee_asset_exists(TREE_COVER_ASSET):
+        raise ValueError(
+            f"Tree cover asset not found: {TREE_COVER_ASSET}. Run "
+            f"generate_hybrid_tree_mask with end_year={end_year} first."
+        )
+    if not is_gee_asset_exists(RAIN_INDEX_ASSET):
+        raise ValueError(f"Rain index asset not found: {RAIN_INDEX_ASSET}.")
+
+    requiredZBands = {f"zScore_{y}" for y in range(zMinYear, zMaxYear + 1)}
+    availableZBands = set(ee.Image(RAIN_INDEX_ASSET).bandNames().getInfo())
+    missingZBands = sorted(requiredZBands - availableZBands)
+    if missingZBands:
+        raise ValueError(
+            f"{RAIN_INDEX_ASSET} is missing bands: {missingZBands}. It was "
+            f"likely exported with a smaller end_year — re-run rainfall_index "
+            f"with end_year >= {zMaxYear} (delete the existing asset first, "
+            "its name doesn't auto-version)."
+        )
+
     treeMeta = ee.Image(TREE_COVER_ASSET)
     startYearTree = treeMeta.select("start_year")
     endYearTree = treeMeta.select("end_year")
 
-    fireIndex = ee.Image(FIRE_INDEX_ASSET)
+    rainIndex = ee.Image(RAIN_INDEX_ASSET)
 
-    # I need zScore bands covering BOTH my analysis window and my baseline
-    # window — whichever stretches further in either direction. Right now
-    # they're the same range (2004-2024), so this doesn't change anything
-    # today, but it protects me for later when I extend END_YEAR and the two
-    # windows stop lining up.
     zScoreCol_list = []
-
     for y in range(zMinYear, zMaxYear + 1):
         zScoreCol_list.append(
-            fireIndex.select("zScore_" + str(y)).rename("zScore").set("year", y)
+            rainIndex.select("zScore_" + str(y)).rename("zScore").set("year", y)
         )
 
     zScoreCol = ee.ImageCollection(zScoreCol_list)
 
     # LANDSAT HARMONIZATION & kNDVI :=
+
     chastainBandNames = ["BLUE", "GREEN", "RED", "NIR", "SWIR1", "SWIR2"]
     oliETMSlopes = ee.Image.constant(
         [1.03501, 1.00921, 1.01991, 1.14061, 1.04351, 1.05271]
@@ -149,6 +176,7 @@ def forest_fire_sensitivity(aez, start_year=2004, end_year=2024, gee_account_id=
         )
 
         harmonized = scaled.multiply(oliETMSlopes).add(oliETMIntercepts)
+
         return harmonized.copyProperties(image, ["system:time_start"])
 
     # Calculate ag-year median kNDVI (Jul 1(year) -> Jun 30(year+1))
@@ -190,18 +218,18 @@ def forest_fire_sensitivity(aez, start_year=2004, end_year=2024, gee_account_id=
     kndviYears = ee.List.sequence(kndviMinYear, kndviMaxYear)
     kndviCol = ee.ImageCollection(kndviYears.map(getAnnualKNDVI))
 
-    # BASELINE kNDVI (Yn_bar):=
+    # BASELINE kNDVI (Yn_bar) :=
     # Mean kNDVI across non-anomalous ag-years only
 
+    # Actual analysis window — the ag-years to compute resistance/resilience FOR.
     analysisYears = ee.List.sequence(start_year, end_year)
 
-    # This is my frozen baseline window — the ag-years I use to WORK OUT
-    # what Yn_bar (my "normal" kNDVI reference) is. On purpose, kept
-    # separate from analysisYears so extending my results later never
-    # shifts this.
+    # Frozen baseline window — the ag-years used to work out Yn_bar. Kept
+    # separate from analysisYears so extending the analysis later doesn't
+    # shift Yn_bar and quietly rewrite already-published results.
     baselineYears = ee.List.sequence(BASELINE_START_YEAR, BASELINE_END_YEAR)
 
-    def calc_kndvi(y):
+    def calc_Yn_bar(y):
         year = ee.Number(y)
         kndvi = ee.Image(kndviCol.filter(ee.Filter.eq("year", year)).first())
         zScore = (
@@ -216,14 +244,16 @@ def forest_fire_sensitivity(aez, start_year=2004, end_year=2024, gee_account_id=
         return kndvi.updateMask(isNormal.And(isForest)).set("year", year)
 
     Yn_bar = (
-        ee.ImageCollection(baselineYears.map(calc_kndvi))
+        ee.ImageCollection(baselineYears.map(calc_Yn_bar))
         .mean()
         .rename("kndvi_baseline")
     )
 
     # SIGNED RESISTANCE & RESILIENCE :=
-    def calc_kndvi_ye(y):
+    # Unchanged logic — runs only over analysisYears, using the frozen
+    # Yn_bar computed above.
 
+    def calc_metrics_cols(y):
         year = ee.Number(y)
 
         kndviYe = ee.Image(kndviCol.filter(ee.Filter.eq("year", year)).first())
@@ -233,7 +263,7 @@ def forest_fire_sensitivity(aez, start_year=2004, end_year=2024, gee_account_id=
             .reproject(crs=kndviYe.projection(), scale=30)
         )
 
-        # Only compute on forest pixels during anomalous fire ag-years
+        # Only compute on forest pixels during anomalous rainfall ag-years
         isAnomalous = zScore.select("zScore").gt(Z_THRESHOLD)
         isForest = startYearTree.lte(year).And(endYearTree.gte(year))
         eventMask = isAnomalous.And(isForest)
@@ -251,31 +281,30 @@ def forest_fire_sensitivity(aez, start_year=2004, end_year=2024, gee_account_id=
 
         # Resilience: ONLY computed when Ye < Yn_bar (negative effect years)
         isNegativeEffect = kndviYe.lt(Yn_bar)
-        resil_mask = eventMask.And(isNegativeEffect)
+        resilMask = eventMask.And(isNegativeEffect)
 
-        kndvi_next = ee.Image(
-            kndviCol.filter(ee.Filter.eq("year", year.add(1))).first()
-        )
-        diffNext = kndvi_next.subtract(Yn_bar)
+        kndviNext = ee.Image(kndviCol.filter(ee.Filter.eq("year", year.add(1))).first())
+        diffNext = kndviNext.subtract(Yn_bar)
         diffNextAbs = diffNext.abs().max(1e-6)
 
         resilience = (
             diffAbs.divide(diffNextAbs)
             .multiply(diffNext.signum())
             .rename("resilience")
-            .updateMask(resil_mask)
+            .updateMask(resilMask)
         )
 
         return ee.Image.cat([resistance, resilience]).set("year", year)
 
-    metricsCol = ee.ImageCollection(analysisYears.map(calc_kndvi_ye))
+    metricsCol = ee.ImageCollection(analysisYears.map(calc_metrics_cols))
 
     # AGGREGATE & EXPORT :=
-    mean_resist = metricsCol.select("resistance").mean().clip(aoi)
-    mean_resil = metricsCol.select("resilience").mean().clip(aoi)
 
-    finalOutput = mean_resist.rename("resistance").addBands(
-        mean_resil.rename("resilience")
+    meanResist = metricsCol.select("resistance").mean().clip(aoi)
+    meanResil = metricsCol.select("resilience").mean().clip(aoi)
+
+    finalOutput = meanResist.rename("resistance").addBands(
+        meanResil.rename("resilience")
     )
 
     task_id = export_raster_asset_to_gee(
