@@ -217,7 +217,7 @@ def fire_index(aez, start_year=2004, end_year=2024, gee_account_id=None):
     )
 
     total_bands = (end_year - start_year + 1) * 5
-    print("✅ Clean pipeline compilation verified.")
+    print(" Clean pipeline compilation verified.")
     print(f"Ready to execute in the tasks tab. Total structured bands: {total_bands}.")
 
     return task_id
