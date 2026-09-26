@@ -2,8 +2,9 @@
  * Forest Sensitivity Analysis Pipeline — Script 2
  * Drought Resistance & Resilience (Harmonized kNDVI + Signed Formulas)
  *
- * For each forest pixel, computes mean resistance and resilience
- * across all drought years (SPEI-12 < threshold).
+ * For each forest pixel and drought year, stores signed resistance and
+ * resilience. Does not average across years. Script 02c aggregates and
+ * classifies those yearly bands.
  *
  * Harmonization: Transforms Landsat 8/9 (OLI) to Landsat 5/7 (ETM+)
  * equivalent before computing kNDVI to eliminate sensor-shift bias.
@@ -11,8 +12,9 @@
  * Signed resistance (both +ve and -ve events):
  * Resistance = Yn_bar / |Ye - Yn_bar| × sign(Ye - Yn_bar)
  *
- * Resilience computed ONLY when Ye < Yn_bar (negative effect years):
  * Resilience = |Ye - Yn_bar| / |Ye+1 - Yn_bar| × sign(Ye+1 - Yn_bar)
+ * Stored for every drought year. The Ye < 0.95*Yn filter is applied in 02c.
+ * Band eligible_YYYY = 1 when the pixel is in drought and Ye < 0.95*Yn.
  *
  * Requires:
  * - Forest mask asset from Script 1
@@ -186,10 +188,7 @@ var metricsCol = ee.ImageCollection(analysisYears.map(function(y) {
                          .rename('resistance')
                          .updateMask(eventMask);
 
-  // Resilience: ONLY computed when Ye < Yn_bar (negative effect years)
-  var isNegativeEffect = kndviYe.lt(Yn_bar);
-  var resilMask        = eventMask.and(isNegativeEffect);
-
+  // Resilience for every drought year. 02c keeps only Ye < 0.95*Yn.
   var kndviNext   = kndviCol.filter(ee.Filter.eq('year', year.add(1))).first();
   var diffNext    = kndviNext.subtract(Yn_bar);
   var diffNextAbs = diffNext.abs().max(1e-6);
@@ -197,26 +196,28 @@ var metricsCol = ee.ImageCollection(analysisYears.map(function(y) {
   var resilience = diffAbs.divide(diffNextAbs)
                           .multiply(diffNext.signum())
                           .rename('resilience')
-                          .updateMask(resilMask);
+                          .updateMask(eventMask);
 
-  return ee.Image.cat([resistance, resilience]).set('year', year);
+  var eligible = eventMask.and(kndviYe.lt(Yn_bar.multiply(0.95)))
+                          .rename('eligible');
+
+  return ee.Image.cat([resistance, resilience, eligible]).set('year', year);
 }));
 
-// AGGREGATE & EXPORT :=
+// One band per year. Names: resistance_YYYY, resilience_YYYY, eligible_YYYY.
 
-var meanResistance = metricsCol.select('resistance').mean().clip(aoi);
-var meanResilience = metricsCol.select('resilience').mean().clip(aoi);
+var yearlyBands = [];
+for (var yy = START_YEAR; yy <= END_YEAR; yy++) {
+  var yearImg = ee.Image(metricsCol.filter(ee.Filter.eq('year', yy)).first());
+  yearlyBands.push(yearImg.select('resistance').rename('resistance_' + yy));
+  yearlyBands.push(yearImg.select('resilience').rename('resilience_' + yy));
+  yearlyBands.push(yearImg.select('eligible').rename('eligible_' + yy));
+}
+var finalOutput = ee.Image.cat(yearlyBands).clip(aoi);
 
-var finalOutput = meanResistance.rename('resistance')
-                                .addBands(meanResilience.rename('resilience'));
-
-// Preview
-var visResist = {min: -3, max: 3,
-  palette: ['8b0000','ff0000','ffffff','00ff00','006400']};
-var visResil  = {min: -3, max: 3,
-  palette: ['006400','ffffff','8b0000','ffffff','004d00']};
-Map.addLayer(meanResistance, visResist, 'Drought resistance (Harmonized)');
-Map.addLayer(meanResilience, visResil,  'Drought resilience (Harmonized)');
+Map.addLayer(finalOutput.select('resistance_' + END_YEAR),
+  {min: -3, max: 3, palette: ['8b0000','ff0000','ffffff','00ff00','006400']},
+  'Drought resistance ' + END_YEAR);
 
 Export.image.toAsset({
   image       : finalOutput,

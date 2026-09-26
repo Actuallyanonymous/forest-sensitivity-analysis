@@ -80,6 +80,41 @@ percentile (CHIRPS 2000–2023 baseline).
 All metrics are computed only on forest pixels and averaged across all
 identified event years (2004–2022).
 
+### Signed class thresholds (Odisha drought sample)
+
+For the Odisha drought classification we use the **signed** ratios
+(positive when the canopy is above baseline, negative when it is below):
+
+- **Resistance** \(R = \bar{Y}_n / |Y_e - \bar{Y}_n| \times \mathrm{sign}(Y_e - \bar{Y}_n)\)
+- **Resilience** \(\Delta = |Y_e - \bar{Y}_n| / |Y_{e+1} - \bar{Y}_n| \times \mathrm{sign}(Y_{e+1} - \bar{Y}_n)\)
+
+\(\bar{Y}_n\) is the median kNDVI of non-drought forest years.
+Classes use fixed cuts at **±20**. These cuts were **checked** with the
+IQR rule on the Odisha forest-pixel sample (Tukey fences about −22.6 and
++19.2). The IQR check **verifies** the ±20 bounds; it was not used to
+choose them.
+
+**Resistance** is scored on **every** drought year (canopy below or above
+normal). Sample: 29,328 forest pixel-years, Odisha, SPEI-3 July–September < −1.
+\(R = -20\) at \(Y_e = 0.95\bar{Y}_n\); \(R = +20\) at \(Y_e = 1.05\bar{Y}_n\).
+\(Y_{e+1}\) is not used.
+
+| Category | Condition on resistance | Condition on \(Y_e\) | Share | Meaning |
+|---|---|---|---|---|
+| Low | \(R < -20\) | \(0.95\bar{Y}_n < Y_e < \bar{Y}_n\) | 8.81% | Below normal by less than 5% |
+| Medium | \(-20 < R < 20\) | \(Y_e \le 0.95\bar{Y}_n\) or \(Y_e \ge 1.05\bar{Y}_n\) | 83.87% | At least 5% away from normal |
+| High | \(R > 20\) | \(\bar{Y}_n < Y_e < 1.05\bar{Y}_n\) | 7.32% | Above normal by less than 5% |
+
+**Resilience** uses one filter only: \(Y_e < 0.95\bar{Y}_n\) (19,707 years,
+67.2% of drought years). Let \(D = |Y_e - \bar{Y}_n|\). Shares below are
+of these 19,707 years.
+
+| Category | Condition on resilience | Condition on \(Y_e\) and \(Y_{e+1}\) | Share | Meaning |
+|---|---|---|---|---|
+| Low | \(\Delta < -20\) | \(Y_e < 0.95\bar{Y}_n\) and \(\bar{Y}_n - D/20 < Y_{e+1} < \bar{Y}_n\) | 2.25% | Next year still just below normal |
+| Medium | \(-20 < \Delta < 20\) | \(Y_e < 0.95\bar{Y}_n\) and \(\|Y_{e+1} - \bar{Y}_n\| \ge D/20\) | 95.38% | Next year not extremely close to normal |
+| High | \(\Delta > 20\) | \(Y_e < 0.95\bar{Y}_n\) and \(\bar{Y}_n < Y_{e+1} < \bar{Y}_n + D/20\) | 2.37% | Next year just above normal |
+
 ---
 
 ## Repository structure

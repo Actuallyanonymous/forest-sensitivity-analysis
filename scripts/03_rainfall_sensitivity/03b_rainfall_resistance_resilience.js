@@ -211,10 +211,6 @@ var metricsCol = ee.ImageCollection(analysisYears.map(function(y) {
                          .rename('resistance')
                          .updateMask(eventMask);
 
-  // Resilience: ONLY computed when Ye < Yn_bar (negative effect years)
-  var isNegativeEffect = kndviYe.lt(Yn_bar);
-  var resilMask        = eventMask.and(isNegativeEffect);
-
   var kndviNext   = ee.Image(kndviCol.filter(ee.Filter.eq('year', year.add(1))).first());
   var diffNext    = kndviNext.subtract(Yn_bar);
   var diffNextAbs = diffNext.abs().max(1e-6);
@@ -222,27 +218,26 @@ var metricsCol = ee.ImageCollection(analysisYears.map(function(y) {
   var resilience = diffAbs.divide(diffNextAbs)
                           .multiply(diffNext.signum())
                           .rename('resilience')
-                          .updateMask(resilMask);
+                          .updateMask(eventMask);
 
-  return ee.Image.cat([resistance, resilience]).set('year', year);
+  var eligible = eventMask.and(kndviYe.lt(Yn_bar.multiply(0.95)))
+                          .rename('eligible');
+
+  return ee.Image.cat([resistance, resilience, eligible]).set('year', year);
 }));
 
-// AGGREGATE & EXPORT :=
+var yearlyBands = [];
+for (var yy = START_YEAR; yy <= END_YEAR; yy++) {
+  var yearImg = ee.Image(metricsCol.filter(ee.Filter.eq('year', yy)).first());
+  yearlyBands.push(yearImg.select('resistance').rename('resistance_' + yy));
+  yearlyBands.push(yearImg.select('resilience').rename('resilience_' + yy));
+  yearlyBands.push(yearImg.select('eligible').rename('eligible_' + yy));
+}
+var finalOutput = ee.Image.cat(yearlyBands).clip(aoi);
 
-var meanResist = metricsCol.select('resistance').mean().clip(aoi);
-var meanResil  = metricsCol.select('resilience').mean().clip(aoi);
-
-var finalOutput = meanResist.rename('resistance')
-                            .addBands(meanResil.rename('resilience'));
-
-// Preview
-var visResist = {min: -3, max: 3,
-  palette: ['8b0000','ff0000','ffffff','00ff00','006400']};
-var visResil  = {min: -3, max: 3,
-  palette: ['006400','ffffff','8b0000','ffffff','004d00']};
-
-Map.addLayer(meanResist, visResist, 'Rainfall resistance (Harmonized kNDVI)');
-Map.addLayer(meanResil,  visResil,  'Rainfall resilience (Harmonized kNDVI)');
+Map.addLayer(finalOutput.select('resistance_' + END_YEAR),
+  {min: -3, max: 3, palette: ['8b0000','ff0000','ffffff','00ff00','006400']},
+  'Rainfall resistance ' + END_YEAR);
 
 Export.image.toAsset({
   image       : finalOutput,
