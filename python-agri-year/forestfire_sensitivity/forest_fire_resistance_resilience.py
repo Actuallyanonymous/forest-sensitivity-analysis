@@ -15,11 +15,24 @@ from utilities.gee_utils import export_raster_asset_to_gee, is_gee_asset_exists,
  * ag-year now, so startYearTree/endYearTree comparisons against `year`
  * carry no fuzz.
  *
+ * For each forest pixel and fire ag-year, stores signed resistance and
+ * resilience. Does not average across years.
+ * classify_resistance_resilience.py averages those yearly bands and
+ * assigns low / medium / high classes.
+ *
+ * Annual kNDVI is the median of scenes in the ag-year. Yn_bar is the
+ * mean of those annual values over non-anomalous forest ag-years in the
+ * fixed baseline window.
+ *
  * Signed resistance (both +ve and -ve events):
  * Resistance = Yn_bar / |Ye - Yn_bar| × sign(Ye - Yn_bar)
  *
- * Resilience computed ONLY when Ye < Yn_bar (negative effect years):
  * Resilience = |Ye - Yn_bar| / |Ye+1 - Yn_bar| × sign(Ye+1 - Yn_bar)
+ * Stored for every fire year. The Ye < 0.95*Yn_bar filter is applied at
+ * classification. Band eligible_YYYY = 1 when the pixel is in a fire
+ * year and Ye < 0.95*Yn_bar.
+ *
+ * Output bands: resistance_YYYY, resilience_YYYY, eligible_YYYY.
  *
  * Harmonization: Transforms Landsat 8/9 (OLI) to Landsat 5/7 (ETM+)
  * equivalent before computing kNDVI to eliminate sensor-shift bias.
@@ -45,6 +58,8 @@ def forest_fire_sensitivity(aez, start_year=2004, end_year=2024, gee_account_id=
         f"projects/corestack-datasets-alpha/assets/datasets/SPEI/{OUTPUT_DESC}"
     )
 
+    # Same asset id as the previous 2-band mean export. Delete that asset
+    # before re-running; this script now writes per-year bands.
     if is_gee_asset_exists(OUTPUT_ASSET_ID):
         return None
 
@@ -274,10 +289,8 @@ def forest_fire_sensitivity(aez, start_year=2004, end_year=2024, gee_account_id=
             .updateMask(eventMask)
         )
 
-        # Resilience: ONLY computed when Ye < Yn_bar (negative effect years)
-        isNegativeEffect = kndviYe.lt(Yn_bar)
-        resil_mask = eventMask.And(isNegativeEffect)
-
+        # Resilience for every fire year. Classification keeps only years
+        # with eligible = 1 (Ye < 0.95 * Yn_bar).
         kndvi_next = ee.Image(
             kndviCol.filter(ee.Filter.eq("year", year.add(1))).first()
         )
@@ -288,20 +301,26 @@ def forest_fire_sensitivity(aez, start_year=2004, end_year=2024, gee_account_id=
             diffAbs.divide(diffNextAbs)
             .multiply(diffNext.signum())
             .rename("resilience")
-            .updateMask(resil_mask)
+            .updateMask(eventMask)
         )
 
-        return ee.Image.cat([resistance, resilience]).set("year", year)
+        eligible = eventMask.And(kndviYe.lt(Yn_bar.multiply(0.95))).rename(
+            "eligible"
+        )
+
+        return ee.Image.cat([resistance, resilience, eligible]).set("year", year)
 
     metricsCol = ee.ImageCollection(analysisYears.map(calc_kndvi_ye))
 
-    # AGGREGATE & EXPORT :=
-    mean_resist = metricsCol.select("resistance").mean().clip(aoi)
-    mean_resil = metricsCol.select("resilience").mean().clip(aoi)
+    # One band per ag-year. Averaging and ±20 classes are stage C.
+    yearly_bands = []
+    for yy in range(start_year, end_year + 1):
+        year_img = ee.Image(metricsCol.filter(ee.Filter.eq("year", yy)).first())
+        yearly_bands.append(year_img.select("resistance").rename(f"resistance_{yy}"))
+        yearly_bands.append(year_img.select("resilience").rename(f"resilience_{yy}"))
+        yearly_bands.append(year_img.select("eligible").rename(f"eligible_{yy}"))
 
-    finalOutput = mean_resist.rename("resistance").addBands(
-        mean_resil.rename("resilience")
-    )
+    finalOutput = ee.Image.cat(yearly_bands).clip(aoi)
 
     task_id = export_raster_asset_to_gee(
         finalOutput, OUTPUT_DESC, OUTPUT_ASSET_ID, scale=30, region=aoi
