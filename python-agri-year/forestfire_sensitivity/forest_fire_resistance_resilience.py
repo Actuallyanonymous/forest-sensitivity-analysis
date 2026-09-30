@@ -18,8 +18,9 @@ from utilities.gee_utils import export_raster_asset_to_gee, is_gee_asset_exists,
  * Signed resistance (both +ve and -ve events):
  * Resistance = Yn_bar / |Ye - Yn_bar| × sign(Ye - Yn_bar)
  *
- * Resilience computed ONLY when Ye < Yn_bar (negative effect years):
  * Resilience = |Ye - Yn_bar| / |Ye+1 - Yn_bar| × sign(Ye+1 - Yn_bar)
+ * Stored for every fire year. classify_fire_metrics keeps resilience
+ * only where Ye < 0.95*Yn (eligible_YYYY).
  *
  * Harmonization: Transforms Landsat 8/9 (OLI) to Landsat 5/7 (ETM+)
  * equivalent before computing kNDVI to eliminate sensor-shift bias.
@@ -274,10 +275,6 @@ def forest_fire_sensitivity(aez, start_year=2004, end_year=2024, gee_account_id=
             .updateMask(eventMask)
         )
 
-        # Resilience: ONLY computed when Ye < Yn_bar (negative effect years)
-        isNegativeEffect = kndviYe.lt(Yn_bar)
-        resil_mask = eventMask.And(isNegativeEffect)
-
         kndvi_next = ee.Image(
             kndviCol.filter(ee.Filter.eq("year", year.add(1))).first()
         )
@@ -288,23 +285,77 @@ def forest_fire_sensitivity(aez, start_year=2004, end_year=2024, gee_account_id=
             diffAbs.divide(diffNextAbs)
             .multiply(diffNext.signum())
             .rename("resilience")
-            .updateMask(resil_mask)
+            .updateMask(eventMask)
         )
+        eligible = eventMask.And(kndviYe.lt(Yn_bar.multiply(0.95))).rename("eligible")
 
-        return ee.Image.cat([resistance, resilience]).set("year", year)
+        return ee.Image.cat([resistance, resilience, eligible]).set("year", year)
 
     metricsCol = ee.ImageCollection(analysisYears.map(calc_kndvi_ye))
 
-    # AGGREGATE & EXPORT :=
-    mean_resist = metricsCol.select("resistance").mean().clip(aoi)
-    mean_resil = metricsCol.select("resilience").mean().clip(aoi)
-
-    finalOutput = mean_resist.rename("resistance").addBands(
-        mean_resil.rename("resilience")
-    )
+    yearly_bands = []
+    for yy in range(start_year, end_year + 1):
+        year_img = ee.Image(metricsCol.filter(ee.Filter.eq("year", yy)).first())
+        yearly_bands.append(year_img.select("resistance").rename(f"resistance_{yy}"))
+        yearly_bands.append(year_img.select("resilience").rename(f"resilience_{yy}"))
+        yearly_bands.append(year_img.select("eligible").rename(f"eligible_{yy}"))
+    finalOutput = ee.Image.cat(yearly_bands).clip(aoi)
 
     task_id = export_raster_asset_to_gee(
         finalOutput, OUTPUT_DESC, OUTPUT_ASSET_ID, scale=30, region=aoi
     )
 
     return task_id
+
+
+def _class_of(metric):
+    low = metric.lt(-20)
+    high = metric.gt(20)
+    medium = metric.gte(-20).And(metric.lte(20))
+    return (
+        low.multiply(1)
+        .add(medium.multiply(2))
+        .add(high.multiply(3))
+        .toInt16()
+        .updateMask(metric.mask())
+    )
+
+
+def classify_fire_metrics(aez, start_year=2004, end_year=None, gee_account_id=None):
+    """Mean yearly fire bands and label low, medium, and high.
+
+    Resistance uses every fire year. Resilience uses only eligible years
+    (Ye < 0.95 * Yn). Class codes: 1 low, 2 medium, 3 high.
+    """
+    ee_initialize(gee_account_id)
+    if end_year is None:
+        raise ValueError("end_year must be specified explicitly.")
+
+    root = "projects/corestack-datasets-alpha/assets/datasets/SPEI"
+    yearly_id = f"{root}/fire_metrics_harmonized_kNDVI_AEZ_{aez}"
+    output_desc = f"fire_metrics_classified_AEZ_{aez}"
+    output_id = f"{root}/{output_desc}"
+    if is_gee_asset_exists(output_id):
+        return None
+    if not is_gee_asset_exists(yearly_id):
+        raise ValueError(f"Yearly metrics asset not found: {yearly_id}")
+
+    img = ee.Image(yearly_id)
+    resist, resil = [], []
+    for year in range(start_year, end_year + 1):
+        resist.append(img.select(f"resistance_{year}"))
+        resil.append(
+            img.select(f"resilience_{year}").updateMask(img.select(f"eligible_{year}"))
+        )
+    mean_resistance = ee.ImageCollection(resist).mean().rename("resistance")
+    mean_resilience = ee.ImageCollection(resil).mean().rename("resilience")
+    aoi = ee.FeatureCollection(AEZ).filter(ee.Filter.eq("ae_regcode", aez)).geometry()
+    final_output = (
+        mean_resistance.addBands(mean_resilience)
+        .addBands(_class_of(mean_resistance).rename("resistance_class"))
+        .addBands(_class_of(mean_resilience).rename("resilience_class"))
+        .clip(aoi)
+    )
+    return export_raster_asset_to_gee(
+        final_output, output_desc, output_id, scale=30, region=aoi
+    )
