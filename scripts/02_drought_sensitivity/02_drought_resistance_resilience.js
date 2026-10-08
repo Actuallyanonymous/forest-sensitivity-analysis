@@ -20,7 +20,7 @@
  *
  * Requires:
  * - Forest mask asset from Script 1
- * - SPEI-3 asset from the SPEI pipeline (band yYYYY_m09)
+ * - SPEI-3 asset from the SPEI pipeline (band yYYYY_m07_09)
  */
 
 // CONFIGURATION :=
@@ -37,7 +37,7 @@ var DROUGHT_THRESHOLD = -1.0;   // SPEI-3 JAS below this = drought year
 // Fixed baseline window. This is independent of analysis START_YEAR/END_YEAR.
 // Please don't EVER change this once results are published, or old outputs will change when the pipeline timeline is extended.
 // This helps in fixing the Yn_bar (the average of the non-drought year NDVI) to a constant value.
-// SPEI-3 in the current file runs through 2023 (y2004_m09 ... y2023_m09). Do not set the end to 2024 until that band exists.
+// SPEI-3 in the current file runs through 2023 (y2004_m07_09 ... y2023_m07_09). Do not set the end to 2024 until that band exists.
 var BASELINE_START_YEAR = 2004;  // SPEI has no data before 2004
 var BASELINE_END_YEAR   = 2023;
 
@@ -64,7 +64,7 @@ var speiImages = [];
 for (var y = speiMinYear; y <= speiMaxYear; y++) {
   // SPEI-3 ending September = July–August–September
   speiImages.push(
-    spei3_raw.select('y' + y + '_m09')
+    spei3_raw.select('y' + y + '_m07_09')
       .rename('spei')
       .set('year', y)
   );
