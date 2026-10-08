@@ -16,26 +16,30 @@
  * Stored for every drought year. The Ye < 0.95*Yn filter is applied in 02c.
  * Band eligible_YYYY = 1 when the pixel is in drought and Ye < 0.95*Yn.
  *
+ * Drought year: SPEI-3 ending September (July–August–September) < -1.
+ *
  * Requires:
  * - Forest mask asset from Script 1
- * - SPEI-12 assets from spei-drought-analysis-pipeline
+ * - SPEI-3 asset from the SPEI pipeline (band yYYYY_m09)
  */
 
 // CONFIGURATION :=
 
 var TREE_COVER_ASSET  = 'projects/cs5-pushkinmangla/assets/MP_Hybrid_Tree_Period_2003_2022';
-var OUTPUT_ASSET_ID   = 'projects/cs5-pushkinmangla/assets/MP_Drought_Metrics_Harmonized_kNDVI';
-var OUTPUT_DESC       = 'MP_Drought_Metrics_Harmonized_kNDVI';
+var SPEI3_ASSET       = 'projects/cs5-pushkinmangla/assets/SPEI/SPEI3_Madhya_Pradesh';
+var OUTPUT_ASSET_ID   = 'projects/cs5-pushkinmangla/assets/MP_Drought_Metrics_SPEI3_JAS';
+var OUTPUT_DESC       = 'MP_Drought_Metrics_SPEI3_JAS';
 var STATE_NAME        = 'Madhya Pradesh';
 var START_YEAR        = 2004;
 var END_YEAR          = 2022;
-var DROUGHT_THRESHOLD = -1.0;   // SPEI-12 below this = drought year
+var DROUGHT_THRESHOLD = -1.0;   // SPEI-3 JAS below this = drought year
 
 // Fixed baseline window. This is independent of analysis START_YEAR/END_YEAR.
 // Please don't EVER change this once results are published, or old outputs will change when the pipeline timeline is extended.
-// This helps in fixing the Yn_bar (the average of the non-drought year NDVI) to a constant value. 
+// This helps in fixing the Yn_bar (the average of the non-drought year NDVI) to a constant value.
+// SPEI-3 in the current file runs through 2023 (y2004_m09 ... y2023_m09). Do not set the end to 2024 until that band exists.
 var BASELINE_START_YEAR = 2004;  // SPEI has no data before 2004
-var BASELINE_END_YEAR   = 2024;
+var BASELINE_END_YEAR   = 2023;
 
 // AOI :=
 
@@ -51,23 +55,16 @@ var treeMeta  = ee.Image(TREE_COVER_ASSET);
 var startYear = treeMeta.select('start_year');
 var endYear   = treeMeta.select('end_year');
 
-// Load SPEI-12 collection from single multiband asset
-var SPEI12_ASSET = 'projects/cs5-pushkinmangla/assets/SPEI12_Madhya_Pradesh';
-var spei12_raw   = ee.Image(SPEI12_ASSET);
-var spei12_bandnames = [];
-for (var yn = 2004; yn <= 2023; yn++) {
-  spei12_bandnames.push('y' + yn);
-}
-var spei12_named = spei12_raw.rename(spei12_bandnames);
+var spei3_raw = ee.Image(SPEI3_ASSET);
 
-// Building the per-year SPEI collection here. 
 var speiMinYear = Math.min(START_YEAR, BASELINE_START_YEAR);
 var speiMaxYear = Math.max(END_YEAR, BASELINE_END_YEAR);
 
 var speiImages = [];
 for (var y = speiMinYear; y <= speiMaxYear; y++) {
+  // SPEI-3 ending September = July–August–September
   speiImages.push(
-    spei12_named.select('y' + y)
+    spei3_raw.select('y' + y + '_m09')
       .rename('spei')
       .set('year', y)
   );
@@ -85,12 +82,12 @@ var oliETMIntercepts  = ee.Image.constant([-0.0055, -0.0008, -0.0021, -0.0163, -
 var prepL57 = function(image) {
   var qa   = image.select('QA_PIXEL');
   var mask = qa.bitwiseAnd(1 << 3).eq(0).and(qa.bitwiseAnd(1 << 4).eq(0));
-  
+
   // Apply mask, select optical bands, and apply Collection 2 scale factors
   var scaled = image.updateMask(mask)
                     .select(['SR_B1', 'SR_B2', 'SR_B3', 'SR_B4', 'SR_B5', 'SR_B7'])
                     .multiply(0.0000275).add(-0.2);
-                    
+
   return scaled.rename(chastainBandNames).copyProperties(image, ["system:time_start"]);
 };
 
@@ -98,16 +95,16 @@ var prepL57 = function(image) {
 var prepL89 = function(image) {
   var qa   = image.select('QA_PIXEL');
   var mask = qa.bitwiseAnd(1 << 3).eq(0).and(qa.bitwiseAnd(1 << 4).eq(0));
-  
+
   // Apply mask, select optical bands, and apply Collection 2 scale factors
   var scaled = image.updateMask(mask)
                     .select(['SR_B2', 'SR_B3', 'SR_B4', 'SR_B5', 'SR_B6', 'SR_B7'])
                     .multiply(0.0000275).add(-0.2)
                     .rename(chastainBandNames);
-                    
+
   // Apply Chastain regression model (OLI -> ETM+)
   var harmonized = scaled.multiply(oliETMSlopes).add(oliETMIntercepts);
-  
+
   return harmonized.copyProperties(image, ["system:time_start"]);
 };
 
@@ -136,7 +133,7 @@ var getAnnualKNDVI = function(year) {
 };
 
 // Load kNDVI for START_YEAR to END_YEAR+1 (need next year for resilience)
-//Here this is also changed based on the baseline years. 
+//Here this is also changed based on the baseline years.
 var kndviMinYear = Math.min(START_YEAR, BASELINE_START_YEAR);
 var kndviMaxYear = Math.max(END_YEAR + 1, BASELINE_END_YEAR);
 
