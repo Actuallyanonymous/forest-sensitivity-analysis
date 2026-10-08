@@ -343,9 +343,11 @@ def classify_fire_metrics(aez, start_year=2004, end_year=None, gee_account_id=No
     img = ee.Image(yearly_id)
     resist, resil = [], []
     for year in range(start_year, end_year + 1):
-        resist.append(img.select(f"resistance_{year}"))
+        resist.append(img.select(f"resistance_{year}").rename("resistance"))
         resil.append(
-            img.select(f"resilience_{year}").updateMask(img.select(f"eligible_{year}"))
+            img.select(f"resilience_{year}")
+            .rename("resilience")
+            .updateMask(img.select(f"eligible_{year}"))
         )
     mean_resistance = ee.ImageCollection(resist).mean().rename("resistance")
     mean_resilience = ee.ImageCollection(resil).mean().rename("resilience")

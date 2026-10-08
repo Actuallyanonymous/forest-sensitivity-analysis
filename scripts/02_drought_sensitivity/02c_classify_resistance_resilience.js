@@ -26,9 +26,10 @@ var img = ee.Image(YEARLY_ASSET);
 var resistList = [];
 var resilList = [];
 for (var y = START_YEAR; y <= END_YEAR; y++) {
-  resistList.push(img.select('resistance_' + y));
+  resistList.push(img.select('resistance_' + y).rename('resistance'));
   resilList.push(
-    img.select('resilience_' + y).updateMask(img.select('eligible_' + y))
+    img.select('resilience_' + y).rename('resilience')
+      .updateMask(img.select('eligible_' + y))
   );
 }
 
