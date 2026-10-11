@@ -22,8 +22,8 @@ def high_wind_sensitivity(aez, start_year=2004, end_year=None, gee_account_id=No
     * against `year` carry no fuzz.
     *
     * For each forest pixel and high-wind year, stores signed resistance
-    * and resilience. classify_wind_metrics averages those yearly bands
-    * and labels low, medium, and high.
+    * and resilience. classify_wind_metrics keeps yearly values from -20
+    * to 20 and averages those.
     *
     * Harmonization: Transforms Landsat 8/9 (OLI) to Landsat 5/7 (ETM+)
     * equivalent before computing kNDVI to eliminate sensor-shift bias.
@@ -311,24 +311,17 @@ def high_wind_sensitivity(aez, start_year=2004, end_year=None, gee_account_id=No
     return task_id
 
 
-def _class_of(metric):
-    low = metric.lt(-20)
-    high = metric.gt(20)
-    medium = metric.gte(-20).And(metric.lte(20))
-    return (
-        low.multiply(1)
-        .add(medium.multiply(2))
-        .add(high.multiply(3))
-        .toInt16()
-        .updateMask(metric.mask())
-    )
+def _keep_in_range(metric):
+    """Mask values outside [-20, 20]. Exact ±20 is kept."""
+    return metric.updateMask(metric.gte(-20).And(metric.lte(20)))
 
 
 def classify_wind_metrics(aez, start_year=2004, end_year=None, gee_account_id=None):
-    """Mean yearly wind bands and label low, medium, and high.
+    """Keep yearly wind values from -20 to 20, then mean what remains.
 
-    Resistance uses every high-wind year. Resilience uses only eligible years
-    (Ye < 0.95 * Yn). Class codes: 1 low, 2 medium, 3 high.
+    Values outside that range do not enter the mean. Output bands are
+    resistance and resilience only. Resistance uses every high-wind year.
+    Resilience uses only eligible years (Ye < 0.95 * Yn).
     """
     ee_initialize(gee_account_id)
     if end_year is None:
@@ -336,7 +329,7 @@ def classify_wind_metrics(aez, start_year=2004, end_year=None, gee_account_id=No
 
     root = "projects/corestack-datasets-alpha/assets/datasets/SPEI"
     yearly_id = f"{root}/wind_metrics_harmonized_kNDVI_AEZ_{aez}"
-    output_desc = f"wind_metrics_classified_AEZ_{aez}"
+    output_desc = f"wind_metrics_filtered_AEZ_{aez}"
     output_id = f"{root}/{output_desc}"
     if is_gee_asset_exists(output_id):
         return None
@@ -346,21 +339,20 @@ def classify_wind_metrics(aez, start_year=2004, end_year=None, gee_account_id=No
     img = ee.Image(yearly_id)
     resist, resil = [], []
     for year in range(start_year, end_year + 1):
-        resist.append(img.select(f"resistance_{year}").rename("resistance"))
+        resist.append(
+            _keep_in_range(img.select(f"resistance_{year}").rename("resistance"))
+        )
         resil.append(
-            img.select(f"resilience_{year}")
-            .rename("resilience")
-            .updateMask(img.select(f"eligible_{year}"))
+            _keep_in_range(
+                img.select(f"resilience_{year}")
+                .rename("resilience")
+                .updateMask(img.select(f"eligible_{year}"))
+            )
         )
     mean_resistance = ee.ImageCollection(resist).mean().rename("resistance")
     mean_resilience = ee.ImageCollection(resil).mean().rename("resilience")
     aoi = ee.FeatureCollection(AEZ).filter(ee.Filter.eq("ae_regcode", aez)).geometry()
-    final_output = (
-        mean_resistance.addBands(mean_resilience)
-        .addBands(_class_of(mean_resistance).rename("resistance_class"))
-        .addBands(_class_of(mean_resilience).rename("resilience_class"))
-        .clip(aoi)
-    )
+    final_output = mean_resistance.addBands(mean_resilience).clip(aoi)
     return export_raster_asset_to_gee(
         final_output, output_desc, output_id, scale=30, region=aoi
     )
