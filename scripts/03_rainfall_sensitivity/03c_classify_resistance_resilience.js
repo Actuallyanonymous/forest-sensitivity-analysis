@@ -1,14 +1,16 @@
 /**
  * Rainfall — Script 3c
- * Keep per-year values from -20 to 20, then mean what remains.
- * Values outside that range are masked and do not enter the mean.
- * Exact ±20 is kept. Output bands are resistance and resilience only.
- * Resistance: all heavy-rain years. Resilience: eligible_YYYY only (Ye < 0.95*Yn).
+ * Mean the yearly class numbers from Script 3b, then round to a class.
+ *
+ * Resistance uses every scored heavy-rain year. Classes 1, 2, 3, 4.
+ * Resilience leaves out class 0. If every year is class 0, the pixel is 0.
+ * A mean ending in .5 rounds up.
+ * Script 3b does not score a year unless the next year's kNDVI exists.
  */
 
 var YEARLY_ASSET = 'projects/cs5-pushkinmangla/assets/MP_Rain_Metrics_Harmonized_kNDVI';
-var OUTPUT_ASSET_ID = 'projects/cs5-pushkinmangla/assets/MP_Rain_Metrics_Filtered';
-var OUTPUT_DESC = 'MP_Rain_Metrics_Filtered';
+var OUTPUT_ASSET_ID = 'projects/cs5-pushkinmangla/assets/MP_Rain_Metrics_ClassMean';
+var OUTPUT_DESC = 'MP_Rain_Metrics_ClassMean';
 var STATE_NAME = 'Madhya Pradesh';
 var START_YEAR = 2004;
 var END_YEAR = 2024;
@@ -18,24 +20,26 @@ var aoi = ee.FeatureCollection('FAO/GAUL/2015/level1')
   .geometry();
 var img = ee.Image(YEARLY_ASSET);
 
-var keepInRange = function(metric) {
-  return metric.updateMask(metric.gte(-20).and(metric.lte(20)));
+var roundHalfUp = function(image) {
+  return image.add(0.5).floor().toInt16();
 };
 
 var resistList = [];
 var resilList = [];
 for (var y = START_YEAR; y <= END_YEAR; y++) {
-  resistList.push(keepInRange(img.select('resistance_' + y).rename('resistance')));
-  resilList.push(keepInRange(
-    img.select('resilience_' + y).rename('resilience')
-      .updateMask(img.select('eligible_' + y))
-  ));
+  resistList.push(img.select('resistance_class_' + y).rename('class'));
+  var resilienceYear = img.select('resilience_class_' + y).rename('class');
+  resilList.push(resilienceYear.updateMask(resilienceYear.gt(0)));
 }
 
-var meanResistance = ee.ImageCollection(resistList).mean().rename('resistance');
-var meanResilience = ee.ImageCollection(resilList).mean().rename('resilience');
+var resistanceClass = roundHalfUp(ee.ImageCollection(resistList).mean())
+  .rename('resistance_class');
+var resilienceClass = roundHalfUp(ee.ImageCollection(resilList).mean())
+  .unmask(0)
+  .updateMask(resistanceClass.mask())
+  .rename('resilience_class');
 
-var finalOutput = meanResistance.addBands(meanResilience).clip(aoi);
+var finalOutput = resistanceClass.addBands(resilienceClass).clip(aoi);
 
 Export.image.toAsset({
   image: finalOutput,

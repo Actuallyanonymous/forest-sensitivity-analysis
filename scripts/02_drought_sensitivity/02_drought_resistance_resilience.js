@@ -2,9 +2,10 @@
  * Forest Sensitivity Analysis Pipeline — Script 2
  * Drought Resistance & Resilience (Harmonized kNDVI + Signed Formulas)
  *
- * For each forest pixel and drought year, stores signed resistance and
- * resilience. Does not average across years. Script 02c aggregates and
- * classifies those yearly bands.
+ * For each forest pixel and drought year that has a next-year kNDVI,
+ * stores signed resistance, signed resilience, and the yearly class.
+ * A year without Ye+1 is not scored, including resistance.
+ * Script 02c averages the yearly class numbers.
  *
  * Harmonization: Transforms Landsat 8/9 (OLI) to Landsat 5/7 (ETM+)
  * equivalent before computing kNDVI to eliminate sensor-shift bias.
@@ -13,8 +14,8 @@
  * Resistance = Yn_bar / |Ye - Yn_bar| × sign(Ye - Yn_bar)
  *
  * Resilience = |Ye - Yn_bar| / |Ye+1 - Yn_bar| × sign(Ye+1 - Yn_bar)
- * Stored for every drought year. The Ye < 0.95*Yn filter is applied in 02c.
- * Band eligible_YYYY = 1 when the pixel is in drought and Ye < 0.95*Yn.
+ * Resilience is stored only when Ye / Yn_bar < 0.95. Otherwise the
+ * resilience class is 0. The class comes from the kNDVI ratios.
  *
  * Drought year: SPEI-3 ending September (July–August–September) < -1.
  *
@@ -136,6 +137,8 @@ var getAnnualKNDVI = function(year) {
 //Here this is also changed based on the baseline years.
 var kndviMinYear = Math.min(START_YEAR, BASELINE_START_YEAR);
 var kndviMaxYear = Math.max(END_YEAR + 1, BASELINE_END_YEAR);
+// Last scored year is the last year whose next year is in this collection.
+var METRIC_END_YEAR = Math.min(END_YEAR, kndviMaxYear - 1);
 
 var kndviYears = ee.List.sequence(kndviMinYear, kndviMaxYear);
 var kndviCol   = ee.ImageCollection(kndviYears.map(getAnnualKNDVI));
@@ -145,7 +148,7 @@ var kndviCol   = ee.ImageCollection(kndviYears.map(getAnnualKNDVI));
 
 //the analaysis years will still remain the same , so if some internal year widtch is given like 2010-2018 for example
 //then too the baseline yn_bar would be same of the bigger normalization. But the analysis will be resulting only of the analyssi years.
-var analysisYears = ee.List.sequence(START_YEAR, END_YEAR);
+var analysisYears = ee.List.sequence(START_YEAR, METRIC_END_YEAR);
 
 var baselineYears = ee.List.sequence(BASELINE_START_YEAR, BASELINE_END_YEAR);
 
@@ -176,45 +179,67 @@ var metricsCol = ee.ImageCollection(analysisYears.map(function(y) {
   var isDrought = speiYe.lt(DROUGHT_THRESHOLD);
   var eventMask = isForest.and(isDrought);
 
+  var kndviNext = kndviCol.filter(ee.Filter.eq('year', year.add(1))).first();
+  // No next-year kNDVI: do not score resistance or resilience.
+  var scored = eventMask.updateMask(kndviNext.mask());
+
   var diffRaw = kndviYe.subtract(Yn_bar);
   var diffAbs = diffRaw.abs().max(1e-6);
+  var diffNext = kndviNext.subtract(Yn_bar);
+  var diffNextAbs = diffNext.abs().max(1e-6);
+  var ratio = kndviYe.divide(Yn_bar);
+  var ratioNext = kndviNext.divide(Yn_bar);
+  var deepDrop = ratio.lt(0.95);
 
-  // Resistance: signed, computed for ALL drought years
   var resistance = Yn_bar.divide(diffAbs)
                          .multiply(diffRaw.signum())
                          .rename('resistance')
-                         .updateMask(eventMask);
-
-  // Resilience for every drought year. 02c keeps only Ye < 0.95*Yn.
-  var kndviNext   = kndviCol.filter(ee.Filter.eq('year', year.add(1))).first();
-  var diffNext    = kndviNext.subtract(Yn_bar);
-  var diffNextAbs = diffNext.abs().max(1e-6);
+                         .updateMask(scored);
 
   var resilience = diffAbs.divide(diffNextAbs)
                           .multiply(diffNext.signum())
                           .rename('resilience')
-                          .updateMask(eventMask);
+                          .updateMask(scored.and(deepDrop));
 
-  var eligible = eventMask.and(kndviYe.lt(Yn_bar.multiply(0.95)))
-                          .rename('eligible');
+  // Lower edge included, upper edge excluded. Exact Ye = Yn is class 3.
+  var resistanceClass = ee.Image(1)
+    .where(ratio.gte(0.95), 2)
+    .where(ratio.gte(1), 3)
+    .where(ratio.gte(1.05), 4)
+    .toInt16()
+    .rename('resistance_class')
+    .updateMask(scored);
 
-  return ee.Image.cat([resistance, resilience, eligible]).set('year', year);
+  // Class 0: event year, but the drop is not more than 5%.
+  var resilienceClass = ee.Image(0)
+    .where(deepDrop.and(ratioNext.lt(0.95)).and(kndviNext.lte(kndviYe)), 1)
+    .where(deepDrop.and(ratioNext.lt(0.95)).and(kndviNext.gt(kndviYe)), 2)
+    .where(deepDrop.and(ratioNext.gte(0.95)).and(ratioNext.lt(1)), 3)
+    .where(deepDrop.and(ratioNext.gte(1)).and(ratioNext.lt(1.05)), 4)
+    .where(deepDrop.and(ratioNext.gte(1.05)), 5)
+    .toInt16()
+    .rename('resilience_class')
+    .updateMask(scored);
+
+  return ee.Image.cat([resistance, resilience, resistanceClass, resilienceClass])
+    .set('year', year);
 }));
 
-// One band per year. Names: resistance_YYYY, resilience_YYYY, eligible_YYYY.
+// Bands: resistance_YYYY, resilience_YYYY, resistance_class_YYYY, resilience_class_YYYY.
 
 var yearlyBands = [];
-for (var yy = START_YEAR; yy <= END_YEAR; yy++) {
+for (var yy = START_YEAR; yy <= METRIC_END_YEAR; yy++) {
   var yearImg = ee.Image(metricsCol.filter(ee.Filter.eq('year', yy)).first());
   yearlyBands.push(yearImg.select('resistance').rename('resistance_' + yy));
   yearlyBands.push(yearImg.select('resilience').rename('resilience_' + yy));
-  yearlyBands.push(yearImg.select('eligible').rename('eligible_' + yy));
+  yearlyBands.push(yearImg.select('resistance_class').rename('resistance_class_' + yy));
+  yearlyBands.push(yearImg.select('resilience_class').rename('resilience_class_' + yy));
 }
 var finalOutput = ee.Image.cat(yearlyBands).clip(aoi);
 
-Map.addLayer(finalOutput.select('resistance_' + END_YEAR),
-  {min: -3, max: 3, palette: ['8b0000','ff0000','ffffff','00ff00','006400']},
-  'Drought resistance ' + END_YEAR);
+Map.addLayer(finalOutput.select('resistance_class_' + METRIC_END_YEAR),
+  {min: 1, max: 4, palette: ['8B0000', 'A6DBA0', '1B7837', '2166AC']},
+  'Drought resistance class ' + METRIC_END_YEAR);
 
 Export.image.toAsset({
   image       : finalOutput,
