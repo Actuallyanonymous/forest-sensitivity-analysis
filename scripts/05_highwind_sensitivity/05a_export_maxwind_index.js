@@ -2,17 +2,20 @@
  * Forest Sensitivity Analysis Pipeline — Script 5a
  * High Windspeed Index Export (Annual Max Hourly Windspeed, Hours > Threshold, Mean > Threshold)
  *
- * Computes three quantities per pixel per year and exports as a single
+ * AGRICULTURAL YEAR CONVENTION:
+ * Year `y` = Jul 1 of `y` -> Jun 30 of `y+1`, matching the rest of the pipeline.
+ *
+ * Computes three quantities per pixel per ag-year and exports as a single
  * multiband asset — three bands per year:
  *
- * WSmax_{year}     = maximum hourly windspeed within the year (ERA5-Land)
+ * WSmax_{year}     = maximum hourly windspeed within the ag-year (ERA5-Land)
  * WShoursGT_{year} = total hours where windspeed > WIND_THRESHOLD
  * WSmeanGT_{year}  = mean windspeed during the hours it exceeded WIND_THRESHOLD
  *
  * Windspeed computed from ERA5-Land hourly u/v 10m wind components:
  * windspeed = sqrt(u_component_of_wind_10m^2 + v_component_of_wind_10m^2)
  *
- * Output asset bands (e.g., for 2004-2022 = 19 years * 3 = 57 bands):
+ * Output asset bands (e.g., for 2004-2024 = 21 ag-years * 3 = 63 bands):
  * WSmax_2004, WShoursGT_2004, WSmeanGT_2004, ... 
  *
  * Requires: nothing — only public datasets (ERA5-Land Hourly)
@@ -22,15 +25,15 @@
 //                          1. CONFIGURATION
 //===========================================================================
 
-var STATE_NAME      = 'Andhra Pradesh';
+var STATE_NAME      = 'Orissa';
 var START_YEAR      = 2004;
 var END_YEAR        = 2024;
 
 // Set your wind speed threshold here (in m/s)
 var WIND_THRESHOLD  = 10.0; 
 
-var OUTPUT_ASSET_ID = 'projects/sura-496709/assets/AP_Wind_Index';
-var OUTPUT_DESC     = 'AP_Wind_Index';
+var OUTPUT_ASSET_ID = 'projects/sura-496709/assets/Orissa_Wind_Index';
+var OUTPUT_DESC     = 'Orissa_Wind_Index';
 
 //===========================================================================
 //                          2. AOI
@@ -48,7 +51,7 @@ Map.centerObject(aoi, 7);
 
 var era5Hourly = ee.ImageCollection('ECMWF/ERA5_LAND/HOURLY')
                     .filterBounds(aoi)
-                    .filterDate('2000-01-01', ee.Date.fromYMD(END_YEAR, 12, 31))
+                    .filterDate('2000-01-01', ee.Date.fromYMD(END_YEAR + 1, 7, 1))
                     .select(['u_component_of_wind_10m', 'v_component_of_wind_10m']);
 
 var proj = era5Hourly.first().projection();
@@ -70,9 +73,10 @@ var windSpeedCol = era5Hourly.map(toWindSpeed);
 var years = ee.List.sequence(START_YEAR, END_YEAR);
 
 var annualWSMetrics = ee.ImageCollection(years.map(function(y) {
-  var start = ee.Date.fromYMD(y, 1, 1);
-  // Note: filterDate is exclusive on the end date. Using y+1 ensures Dec 31 is included.
-  var end   = ee.Date.fromYMD(ee.Number(y).add(1), 1, 1);
+  var start = ee.Date.fromYMD(y, 7, 1);
+  // filterDate is exclusive on the end date. Using (y+1, 7, 1) ensures
+  // Jun 30 of the ag-year's second calendar year is included.
+  var end   = ee.Date.fromYMD(ee.Number(y).add(1), 7, 1);
 
   var yearCol = windSpeedCol.filterDate(start, end);
 
@@ -138,5 +142,5 @@ years.evaluate(function(yearList) {
   });
 
   print('✅ Export task ready — go to Tasks tab and click Run.');
-  print('Output bands: WSmax_2004, WShoursGT_2004, WSmeanGT_2004 ... WSmax_2022, WShoursGT_2022, WSmeanGT_2022');
+  print('Output bands: WSmax_2004, WShoursGT_2004, WSmeanGT_2004 ... WSmax_2024, WShoursGT_2024, WSmeanGT_2024');
 });

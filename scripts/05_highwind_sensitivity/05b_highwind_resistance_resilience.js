@@ -2,6 +2,9 @@
  * Forest Sensitivity Analysis Pipeline — Script 5b
  * High Windspeed Resistance & Resilience (Harmonized kNDVI + Signed Formulas)
  *
+ * AGRICULTURAL YEAR CONVENTION:
+ * Year `y` = Jul 1 of `y` -> Jun 30 of `y+1`, matching Scripts 1 and 5a.
+ *
  * For each forest pixel, computes mean resistance and resilience
  * across all high-windspeed years (WSmax > threshold).
  *
@@ -23,13 +26,13 @@
 
 // CONFIGURATION :=
 
-var TREE_COVER_ASSET  = 'projects/valiant-complex-468922-j7/assets/AP_Hybrid_Tree_Period_2003_2022';
-var WIND_INDEX_ASSET  = 'projects/sura-496709/assets/AP_Wind_Index';
+var TREE_COVER_ASSET  = 'projects/sura-496709/assets/Orissa_Hybrid_Tree_Period_2004_2024';
+var WIND_INDEX_ASSET  = 'projects/sura-496709/assets/Orissa_Wind_Index';
 
-var OUTPUT_ASSET_ID   = 'projects/sura-496709/assets/AP_Wind_Metrics_Harmonized_kNDVI';
-var OUTPUT_DESC       = 'AP_Wind_Metrics_Harmonized_kNDVI';
+var OUTPUT_ASSET_ID   = 'projects/sura-496709/assets/Orissa_Wind_Metrics_Harmonized_kNDVI';
+var OUTPUT_DESC       = 'Orissa_Wind_Metrics_Harmonized_kNDVI';
 
-var STATE_NAME        = 'Andhra Pradesh';
+var STATE_NAME        = 'Orissa';
 
 // These are the years I actually want windspeed-resistance results FOR.
 // If I want to extend my analysis later, I just change END_YEAR — nothing
@@ -66,7 +69,7 @@ var windIndex_raw = ee.Image(WIND_INDEX_ASSET);
 
 // I need WSmax bands covering BOTH my analysis window and my baseline
 // window — whichever stretches further. Right now they're the same range
-// (2004-2022), so this doesn't change anything today, but it protects me
+// (2004-2024), so this doesn't change anything today, but it protects me
 // once the two windows stop lining up in the future.
 var wsMinYear = Math.min(START_YEAR, BASELINE_START_YEAR);
 var wsMaxYear = Math.max(END_YEAR, BASELINE_END_YEAR);
@@ -115,10 +118,11 @@ var prepL89 = function(image) {
   return harmonized.copyProperties(image, ["system:time_start"]);
 };
 
-// Calculate annual median kNDVI
+// Calculate ag-year median kNDVI (Jul 1(year) -> Jun 30(year+1))
 var getAnnualKNDVI = function(year) {
-  var start = ee.Date.fromYMD(year, 1, 1);
-  var end   = ee.Date.fromYMD(year, 12, 31);
+  var start = ee.Date.fromYMD(year, 7, 1);
+  // end-exclusive filterDate, so advance 1 day past Jun 30 to include it
+  var end   = ee.Date.fromYMD(ee.Number(year).add(1), 6, 30).advance(1, 'day');
 
   var l89 = ee.ImageCollection('LANDSAT/LC08/C02/T1_L2')
               .merge(ee.ImageCollection('LANDSAT/LC09/C02/T1_L2'))

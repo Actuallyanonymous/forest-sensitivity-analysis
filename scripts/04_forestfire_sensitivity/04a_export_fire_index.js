@@ -2,7 +2,7 @@
 //                          1. CONFIGURATION
 //===========================================================================
 
-var STATE_NAME      = 'Madhya Pradesh';
+var STATE_NAME      = 'Orissa';
 
 // Change these two for the years you actually want results for.
 var START_YEAR      = 2004;
@@ -17,8 +17,8 @@ var END_YEAR        = 2024;
 var BASELINE_START_YEAR = 2004;
 var BASELINE_END_YEAR   = 2024;
 
-var OUTPUT_ASSET_ID = 'projects/cs5-pushkinmangla/assets/MP_Fire_Index_FRP30';
-var OUTPUT_DESC     = 'MP_Fire_Index_FRP30';
+var OUTPUT_ASSET_ID = 'projects/sura-496709/assets/Orissa_Fire_Index_FRP30';
+var OUTPUT_DESC     = 'Orissa_Fire_Index_FRP30';
 var FRP_THRESHOLD   = 30;
 
 //===========================================================================
@@ -45,15 +45,17 @@ var proj = modisFire.first().projection();
 //                    4. ANNUAL METRICS CALCULATION
 //===========================================================================
 
-// We need annual metrics computed for every year covering BOTH the analysis
+// We need ag-year metrics computed for every year covering BOTH the analysis
 // window and the baseline window, whichever stretches further.
+// Ag-year `y` = Jul 1 of `y` -> Jun 30 of `y+1`.
 var metricsMinYear = Math.min(START_YEAR, BASELINE_START_YEAR);
 var metricsMaxYear = Math.max(END_YEAR, BASELINE_END_YEAR);
 var metricsYears   = ee.List.sequence(metricsMinYear, metricsMaxYear);
 
 var annualMetrics = ee.ImageCollection(metricsYears.map(function(y) {
-  var start = ee.Date.fromYMD(y, 1, 1);
-  var end   = ee.Date.fromYMD(y, 12, 31);
+  var start = ee.Date.fromYMD(y, 7, 1);
+  // end-exclusive filterDate, so advance 1 day past Jun 30 to include it
+  var end   = ee.Date.fromYMD(ee.Number(y).add(1), 6, 30).advance(1, 'day');
 
   var yearCollection = modisFire.filterDate(start, end);
 

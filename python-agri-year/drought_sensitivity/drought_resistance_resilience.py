@@ -18,9 +18,9 @@ def generate_drought_resistance(
     *
     * AGRICULTURAL YEAR CONVENTION:
     * Year `y` = Jul 1 of `y` -> Jun 30 of `y+1`, matching the rest of the
-    * pipeline. SPEI-12 bands are named "{y}_{y+1}" (e.g. "2004_2005") by
-    * compute_spei.R — selected directly by that name here, not by a
-    * positional rename.
+    * pipeline. SPEI-3 bands are named "y{y}_m07_09" (e.g. "y2004_m07_09")
+    * by compute_spei.R — the July–September band of calendar year `y`,
+    * which falls inside ag-year `y`. Selected directly by that name.
     *
     * For each forest pixel and drought year that has a next-year kNDVI,
     * stores signed resistance, signed resilience, and the yearly class.
@@ -37,9 +37,11 @@ def generate_drought_resistance(
     * Stored only when Ye / Yn_bar < 0.95. Otherwise the resilience class
     * is 0. The class comes from the kNDVI ratios.
     *
+    * Drought year: SPEI-3 ending September (July–August–September) < -1.
+    *
     * Requires:
     * - Forest mask asset from Script 1
-    * - SPEI-12 asset from the SPEI pipeline (compute_spei.R)
+    * - SPEI-3 asset from the SPEI pipeline (compute_spei.R, band yYYYY_m07_09)
     """
 
     ee_initialize(gee_account_id)
@@ -59,7 +61,7 @@ def generate_drought_resistance(
     if is_gee_asset_exists(OUTPUT_ASSET_ID):
         return None
 
-    DROUGHT_THRESHOLD = -1.0  # SPEI-12 below this = drought year
+    DROUGHT_THRESHOLD = -1.0  # SPEI-3 JAS below this = drought year
 
     # Fixed baseline window. This is independent of analysis START_YEAR/END_YEAR.
     # Please don't EVER change this once results are published, or old outputs will change when the pipeline timeline is extended.
@@ -85,22 +87,22 @@ def generate_drought_resistance(
             f"{date.today().isoformat()}. Reduce end_year."
         )
 
-    SPEI12_ASSET = "projects/corestack-datasets-alpha/assets/datasets/SPEI/SPEI12"
+    SPEI3_ASSET = "projects/corestack-datasets-alpha/assets/datasets/SPEI_updated/SPEI3"
 
     if not is_gee_asset_exists(TREE_COVER_ASSET):
         raise ValueError(
             f"Tree cover asset not found: {TREE_COVER_ASSET}. Run "
             f"generate_hybrid_tree_mask with end_year={end_year} first."
         )
-    if not is_gee_asset_exists(SPEI12_ASSET):
-        raise ValueError(f"SPEI-12 asset not found: {SPEI12_ASSET}.")
+    if not is_gee_asset_exists(SPEI3_ASSET):
+        raise ValueError(f"SPEI-3 asset not found: {SPEI3_ASSET}.")
 
-    requiredSpeiBands = {f"{y}_{y + 1}" for y in range(speiMinYear, speiMaxYear + 1)}
-    availableSpeiBands = set(ee.Image(SPEI12_ASSET).bandNames().getInfo())
+    requiredSpeiBands = {f"y{y}_m07_09" for y in range(speiMinYear, speiMaxYear + 1)}
+    availableSpeiBands = set(ee.Image(SPEI3_ASSET).bandNames().getInfo())
     missingSpeiBands = sorted(requiredSpeiBands - availableSpeiBands)
     if missingSpeiBands:
         raise ValueError(
-            f"{SPEI12_ASSET} is missing bands: {missingSpeiBands}. Re-run the "
+            f"{SPEI3_ASSET} is missing bands: {missingSpeiBands}. Re-run the "
             f"SPEI pipeline with start_year<=2004 and end_year>={speiMaxYear}."
         )
 
@@ -117,15 +119,15 @@ def generate_drought_resistance(
     startYear = treeMeta.select("start_year")
     endYear = treeMeta.select("end_year")
 
-    # Load SPEI-12 collection from single multiband asset. Bands are named
-    # "{y}_{y+1}" by compute_spei.R (e.g. "2004_2005" for ag-year 2004) —
+    # Load SPEI-3 collection from single multiband asset. SPEI-3 ending
+    # September = July–August–September, band "y{y}_m07_09" for ag-year y —
     # select directly by that name rather than assuming band order.
-    spei12_raw = ee.Image(SPEI12_ASSET)
+    spei3_raw = ee.Image(SPEI3_ASSET)
 
     speiImages = []
     for y in range(speiMinYear, speiMaxYear + 1):
         speiImages.append(
-            spei12_raw.select(f"{y}_{y + 1}").rename("spei").set("year", y)
+            spei3_raw.select(f"y{y}_m07_09").rename("spei").set("year", y)
         )
     speiCol = ee.ImageCollection(speiImages)
 

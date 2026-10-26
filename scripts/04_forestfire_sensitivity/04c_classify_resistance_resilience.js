@@ -8,10 +8,10 @@
  * Script 4b does not score a year unless the next year's kNDVI exists.
  */
 
-var YEARLY_ASSET = 'projects/cs5-pushkinmangla/assets/MP_Fire_Metrics_Harmonized_kNDVI';
-var OUTPUT_ASSET_ID = 'projects/cs5-pushkinmangla/assets/MP_Fire_Metrics_ClassMean';
-var OUTPUT_DESC = 'MP_Fire_Metrics_ClassMean';
-var STATE_NAME = 'Madhya Pradesh';
+var YEARLY_ASSET = 'projects/sura-496709/assets/Orissa_Fire_Metrics_Harmonized_kNDVI';
+var OUTPUT_ASSET_ID = 'projects/sura-496709/assets/Orissa_Fire_Metrics_ClassMean';
+var OUTPUT_DESC = 'Orissa_Fire_Metrics_ClassMean';
+var STATE_NAME = 'Orissa';
 var START_YEAR = 2004;
 var END_YEAR = 2024;
 

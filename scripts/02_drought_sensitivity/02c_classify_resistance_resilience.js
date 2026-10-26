@@ -8,12 +8,12 @@
  * Script 2 does not score a year unless the next year's kNDVI exists.
  */
 
-var YEARLY_ASSET = 'projects/cs5-pushkinmangla/assets/MP_Drought_Metrics_SPEI3_JAS';
-var OUTPUT_ASSET_ID = 'projects/cs5-pushkinmangla/assets/MP_Drought_Metrics_ClassMean';
-var OUTPUT_DESC = 'MP_Drought_Metrics_ClassMean';
-var STATE_NAME = 'Madhya Pradesh';
+var YEARLY_ASSET = 'projects/sura-496709/assets/Orissa_Drought_Metrics_SPEI3_JAS';
+var OUTPUT_ASSET_ID = 'projects/sura-496709/assets/Orissa_Drought_Metrics_ClassMean';
+var OUTPUT_DESC = 'Orissa_Drought_Metrics_ClassMean';
+var STATE_NAME = 'Orissa';
 var START_YEAR = 2004;
-var END_YEAR = 2022;
+var END_YEAR = 2024;
 
 var aoi = ee.FeatureCollection('FAO/GAUL/2015/level1')
   .filter(ee.Filter.eq('ADM1_NAME', STATE_NAME))

@@ -2,6 +2,9 @@
  * Forest Sensitivity Analysis Pipeline — Fire Resistance & Resilience
  * Fire Shock Resistance & Resilience (Harmonized kNDVI + Signed Formulas)
  *
+ * AGRICULTURAL YEAR CONVENTION:
+ * Year `y` = Jul 1 of `y` -> Jun 30 of `y+1`, matching Scripts 1 and 4a.
+ *
  * Signed resistance (both +ve and -ve events):
  * Resistance = Yn_bar / |Ye - Yn_bar| × sign(Ye - Yn_bar)
  *
@@ -20,13 +23,13 @@
 
 // Configuration :=
 
-var TREE_COVER_ASSET  = 'projects/cs5-pushkinmangla/assets/MP_Hybrid_Tree_Period_2003_2022';
-var FIRE_INDEX_ASSET  = 'projects/cs5-pushkinmangla/assets/MP_Fire_Index_FRP30';
+var TREE_COVER_ASSET  = 'projects/sura-496709/assets/Orissa_Hybrid_Tree_Period_2004_2024';
+var FIRE_INDEX_ASSET  = 'projects/sura-496709/assets/Orissa_Fire_Index_FRP30';
 
-var OUTPUT_ASSET_ID   = 'projects/cs5-pushkinmangla/assets/MP_Fire_Metrics_Harmonized_kNDVI';
-var OUTPUT_DESC       = 'MP_Fire_Metrics_Harmonized_kNDVI';
+var OUTPUT_ASSET_ID   = 'projects/sura-496709/assets/Orissa_Fire_Metrics_Harmonized_kNDVI';
+var OUTPUT_DESC       = 'Orissa_Fire_Metrics_Harmonized_kNDVI';
 
-var STATE_NAME        = 'Madhya Pradesh';
+var STATE_NAME        = 'Orissa';
 
 // These are the years we actually want fire-resistance/resilience RESULTS
 // for. If ever want to extend my analysis further (say through 2028),
@@ -118,10 +121,11 @@ var prepL89 = function(image) {
   return harmonized.copyProperties(image, ["system:time_start"]);
 };
 
-// Calculate annual median kNDVI
+// Calculate ag-year median kNDVI (Jul 1(year) -> Jun 30(year+1))
 var getAnnualKNDVI = function(year) {
-  var start = ee.Date.fromYMD(year, 1, 1);
-  var end   = ee.Date.fromYMD(year, 12, 31);
+  var start = ee.Date.fromYMD(year, 7, 1);
+  // end-exclusive filterDate, so advance 1 day past Jun 30 to include it
+  var end   = ee.Date.fromYMD(ee.Number(year).add(1), 6, 30).advance(1, 'day');
 
   var l89 = ee.ImageCollection('LANDSAT/LC08/C02/T1_L2')
               .merge(ee.ImageCollection('LANDSAT/LC09/C02/T1_L2'))

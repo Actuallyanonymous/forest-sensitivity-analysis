@@ -2,17 +2,23 @@
  * Forest Sensitivity Analysis Pipeline — Script 3a 
  * Heavy Rainfall Index Export (Wet-Days Only Threshold + Extended Metrics)
  *
- * Computes 5 quantities per pixel per year and exports as a single
+ * AGRICULTURAL YEAR CONVENTION:
+ * Year `y` = Jul 1 of `y` -> Jun 30 of `y+1`. This applies uniformly to
+ * the analysis window, the baseline pooling window, and all band labels.
+ * e.g. Hm_2004 = sum over Jul 1, 2004 -> Jun 30, 2005.
+ *
+ * Computes 5 quantities per pixel per ag-year and exports as a single
  * multiband asset — one band per year for each quantity:
  *
- * Hm_{year}         = annual sum of precipitation on heavy days
- * zScore_{year}     = z-score of Hm relative to the 2004-2022 period
- * heavyDays_{year}  = number of days in the year with heavy rainfall
- * heavyAvg_{year}   = average daily precipitation on heavy rainfall days
- * maxDay_{year}     = maximum daily precipitation recorded in that year
+ * Hm_{year}         = sum of precipitation on heavy days within the ag-year
+ * zScore_{year}     = z-score of Hm relative to the baseline ag-year period
+ * heavyDays_{year}  = number of heavy-rainfall days within the ag-year
+ * heavyAvg_{year}   = average daily precipitation on heavy days
+ * maxDay_{year}     = maximum daily precipitation recorded in the ag-year
  *
- * Heavy day definition: daily precipitation > long-term 95th percentile 
- * of WET DAYS ONLY (> 1mm) (CHIRPS)
+ * Heavy day definition: daily precipitation > long-term 95th percentile
+ * of WET DAYS ONLY (> 1mm) (CHIRPS), pooled over the ag-year-aligned
+ * baseline window.
  *
  * This asset is the direct input to Script 3b, analogous to how
  * SPEI assets are the input to Script 2 (drought).
@@ -24,7 +30,7 @@
 
 // 1. CONFIGURATION
 
-var STATE_NAME      = 'Madhya Pradesh';
+var STATE_NAME      = 'Orissa';
 
 //change these START_YEAR & END_YEAR for changing the analysis timeline . don't touch the baseline years, if not sure how this works.
 var START_YEAR      = 2004;
@@ -37,8 +43,8 @@ var END_YEAR        = 2024;
 var BASELINE_START_YEAR = 2004;
 var BASELINE_END_YEAR   = 2024;
 
-var OUTPUT_ASSET_ID = 'projects/cs5-pushkinmangla/assets/MP_Rain_Index_Wet95_Final';
-var OUTPUT_DESC     = 'MP_Rain_Index_Wet95_Final';
+var OUTPUT_ASSET_ID = 'projects/sura-496709/assets/Orissa_Rain_Index_Wet95_Final';
+var OUTPUT_DESC     = 'Orissa_Rain_Index_Wet95_Final';
 
 
 
@@ -52,18 +58,23 @@ Map.centerObject(aoi, 7);
 
 
 
-// 3. BASELINE HEAVY RAINFALL THRESHOLD
+// 3. FULL CHIRPS COLLECTION
 
-//extend this too if the pipeline is extended further. 
-var chirps = ee.ImageCollection('UCSB-CHG/CHIRPS/DAILY')
-               .filterBounds(aoi)
-               .filterDate('2000-01-01', ee.Date.fromYMD(BASELINE_END_YEAR, 12, 31))
-               .select('precipitation');
-//now here I have written BASELINE_END_YEAR so this won't be needed to change even if baseline year changes and peipeline extends, they'll go hand in hand . Yayy
-var proj = chirps.first().projection();
+// Unbounded on the end date: it feeds both the baseline percentile (bounded
+// separately below) and the per-year metrics for every analysis year.
+var chirpsFull = ee.ImageCollection('UCSB-CHG/CHIRPS/DAILY')
+                   .filterBounds(aoi)
+                   .select('precipitation');
+var proj = chirpsFull.first().projection();
+
+// 4. BASELINE HEAVY RAINFALL THRESHOLD
+
+// Pooled over ag-year-aligned days only: Jul 1, 2000 -> Jun 30, BASELINE_END_YEAR+1.
+var chirpsBaseline = chirpsFull.filterDate(
+  '2000-07-01', ee.Date.fromYMD(BASELINE_END_YEAR + 1, 6, 30).advance(1, 'day'));
 
 // Long-term 95th percentile of WET DAYS ONLY (> 1mm)
-var p95 = chirps.map(function(img) {
+var p95 = chirpsBaseline.map(function(img) {
                   return img.updateMask(img.gt(1)); 
                 })
                 .reduce(ee.Reducer.percentile([95]))
@@ -73,19 +84,20 @@ var p95 = chirps.map(function(img) {
 
 
 
-// 4. ANNUAL METRICS CALCULATION
+// 5. ANNUAL METRICS CALCULATION
 
 var metricsMinYear = Math.min(START_YEAR, BASELINE_START_YEAR);
 var metricsMaxYear = Math.max(END_YEAR, BASELINE_END_YEAR);
 var metricsYears   = ee.List.sequence(metricsMinYear, metricsMaxYear);
 
 var annualMetrics = ee.ImageCollection(metricsYears.map(function(y) {
-  var start = ee.Date.fromYMD(y, 1, 1);
-  var end   = ee.Date.fromYMD(y, 12, 31);
+  var start = ee.Date.fromYMD(y, 7, 1);
+  // end-exclusive filterDate, so advance 1 day past Jun 30 to include it
+  var end   = ee.Date.fromYMD(ee.Number(y).add(1), 6, 30).advance(1, 'day');
 
-  var yearCollection = chirps.filterDate(start, end);
+  var yearCollection = chirpsFull.filterDate(start, end);
 
-  // Absolute maximum daily rainfall for this year
+  // Absolute maximum daily rainfall for this ag-year
   var maxDay = yearCollection.max()
                              .unmask(0)
                              .setDefaultProjection(proj)
@@ -96,7 +108,7 @@ var annualMetrics = ee.ImageCollection(metricsYears.map(function(y) {
     return img.updateMask(img.gt(p95));
   });
 
-  // 1. Annual sum of heavy rainfall
+  // 1. Ag-year sum of heavy rainfall
   var hm = heavyRainCollection.map(function(img) { return img.unmask(0); })
                               .sum()
                               .setDefaultProjection(proj)
@@ -126,7 +138,7 @@ var annualMetrics = ee.ImageCollection(metricsYears.map(function(y) {
 
 
 
-// 5. FIXED Z-SCORE CALCULATION
+// 6. FIXED Z-SCORE CALCULATION
 
 var baselineYears = ee.List.sequence(BASELINE_START_YEAR, BASELINE_END_YEAR);
 
@@ -147,7 +159,7 @@ var completedAnnualCollection = annualMetrics.map(function(img) {
 
 
 
-// 6. SERVER-SIDE STACK INTO SINGLE MULTIBAND IMAGE & EXPORT
+// 7. SERVER-SIDE STACK INTO SINGLE MULTIBAND IMAGE & EXPORT
 
 var analysisYears = ee.List.sequence(START_YEAR, END_YEAR); // same as original `years`
 

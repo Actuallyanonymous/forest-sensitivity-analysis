@@ -1,21 +1,28 @@
 /**
  * Forest Sensitivity Analysis Pipeline — Script 1
- * Hybrid 30m Annual Tree Cover Mask + Contiguous Forest Period
+ * Hybrid 30m Agricultural-Year Tree Cover Mask + Contiguous Forest Period
  *
- * Produces per-pixel: length (years), start_year, end_year
- * of the most recent unbroken forest period (2003–2022).
+ * AGRICULTURAL YEAR CONVENTION:
+ * Year `y` = Jul 1 of `y` -> Jun 30 of `y+1`, matching Scripts 2-5.
  *
- * Sources:
- *   1. GLC-FCS30D (2003–2022)
- *   2. Dynamic World (2015–present)
- *   3. IndiaSat LULC (2017–2024), Core-stack. 
+ * Produces per-pixel: length (ag-years), start_year, end_year (ag-year
+ * labels) of the most recent unbroken forest period (2004–2024).
  *
- *  Union logic: majority vote among active datasets per year.
- *   GLC-FCS30D: 2003–2022 (classes 51–92)
- *   Dynamic World: 2015–present (class 1 = Trees)
- *   IndiaSat LULC: 2017–2024 (class 6 = Trees)
+ * Sources, and how each maps onto an ag-year `y`:
+ *   1. GLC-FCS30D (2003–2022, one classification per calendar year).
+ *      An ag-year straddles calendar years `y` and `y+1`, so the ag-year
+ *      signal is the average of those two bands (>= 0.5 says forest).
+ *      When only one of the two bands exists, that band is used alone.
+ *   2. Dynamic World (2015–present) — windowed to Jul 1(y) -> Jun 30(y+1).
+ *   3. IndiaSat LULC (2017–present), Core-stack — assets are named
+ *      pan_india_lulc_v3_{y}_{y+1}, already ag-year aligned.
  *
- * Temporal correction: ±2 year window as used in other places too by the team.
+ * Union logic: majority vote among active datasets per ag-year.
+ *   GLC-FCS30D: active while y <= 2022 (classes 51–92)
+ *   Dynamic World: active from y >= 2015 (class 1 = Trees)
+ *   IndiaSat LULC: active from y >= 2017 (class 6 = Trees)
+ *
+ * Temporal correction: ±2 ag-year window as used in other places too by the team.
  **/
 
 
@@ -24,15 +31,16 @@
 
 // --- Change these two lines to run for any state or district ---
 var ADMIN_LEVEL  = 'state';               // 'state' or 'district'
-var STATE_NAME   = 'Madhya Pradesh';
+var STATE_NAME   = 'Orissa';
 var DISTRICT_NAME = '';                   // only used if ADMIN_LEVEL = 'district'
 
-var START_YEAR      = 2003;
-var END_YEAR        = 2022;
+var START_YEAR      = 2004;
+var END_YEAR        = 2024;
+var LULC_START_YEAR = 2017;
 var TEMPORAL_WINDOW = 2;
 
-var OUTPUT_ASSET_ID = 'projects/cs5-pushkinmangla/assets/MP_Hybrid_Tree_Period_2003_2022';
-var OUTPUT_DESC     = 'MP_Hybrid_Tree_Period_2003_2022';
+var OUTPUT_ASSET_ID = 'projects/sura-496709/assets/Orissa_Hybrid_Tree_Period_2004_2024';
+var OUTPUT_DESC     = 'Orissa_Hybrid_Tree_Period_2004_2024';
 
 
 // AOI :=
@@ -65,17 +73,14 @@ var glcMosaic = ee.ImageCollection('projects/sat-io/open-datasets/GLC-FCS30D/ann
 // --- Dynamic World ---
 var dwCol = ee.ImageCollection('GOOGLE/DYNAMICWORLD/V1').filterBounds(aoi);
 
-// --- IndiaSat LULC ---
-var indiaSatList = [
-  ee.Image('projects/corestack-datasets/assets/datasets/LULC_v3_river_basin/pan_india_lulc_v3_2017_2018').set('year', 2017),
-  ee.Image('projects/corestack-datasets/assets/datasets/LULC_v3_river_basin/pan_india_lulc_v3_2018_2019').set('year', 2018),
-  ee.Image('projects/corestack-datasets/assets/datasets/LULC_v3_river_basin/pan_india_lulc_v3_2019_2020').set('year', 2019),
-  ee.Image('projects/corestack-datasets/assets/datasets/LULC_v3_river_basin/pan_india_lulc_v3_2020_2021').set('year', 2020),
-  ee.Image('projects/corestack-datasets/assets/datasets/LULC_v3_river_basin/pan_india_lulc_v3_2021_2022').set('year', 2021),
-  ee.Image('projects/corestack-datasets/assets/datasets/LULC_v3_river_basin/pan_india_lulc_v3_2022_2023').set('year', 2022),
-  ee.Image('projects/corestack-datasets/assets/datasets/LULC_v3_river_basin/pan_india_lulc_v3_2023_2024').set('year', 2023),
-  ee.Image('projects/corestack-datasets/assets/datasets/LULC_v3_river_basin/pan_india_lulc_v3_2024_2025').set('year', 2024),
-];
+// --- IndiaSat LULC (already ag-year aligned) ---
+var indiaSatList = [];
+for (var ly = LULC_START_YEAR; ly <= END_YEAR; ly++) {
+  indiaSatList.push(
+    ee.Image('projects/corestack-datasets/assets/datasets/LULC_v3_river_basin/pan_india_lulc_v3_' + ly + '_' + (ly + 1))
+      .set('year', ly)
+  );
+}
 var indiaSatCol = ee.ImageCollection(indiaSatList);
 
 var getIndiaSatMask = function(year) {
@@ -89,6 +94,16 @@ var getIndiaSatMask = function(year) {
   )).rename('tree');
 };
 
+var glcBandForCalendarYear = function(calYear) {
+  var bandName = ee.String('b').cat(calYear.subtract(1999).format('%.0f'));
+  return ee.Image(ee.Algorithms.If(
+    calYear.lte(2022),
+    glcMosaic.select(bandName).gte(51).and(
+      glcMosaic.select(bandName).lte(92)),
+    ee.Image(0)
+  )).rename('tree');
+};
+
 
 // HYBRID MASK GENERATION :=
 
@@ -98,32 +113,36 @@ var years = ee.List.sequence(START_YEAR, END_YEAR);
 var annualTreeCoverMasks = ee.ImageCollection(years.map(function(year) {
   year = ee.Number(year);
 
-  // GLC — active only up to 2022, classes 51–92 are forests
-var bandName = ee.String('b').cat(year.subtract(1999).format('%.0f'));
-var glcMask = ee.Image(ee.Algorithms.If(
-  year.lte(2022),
-  glcMosaic.select(bandName).gte(51).and(
-    glcMosaic.select(bandName).lte(92)),
-  ee.Image(0)
-)).rename('tree');
-var proj = glcMask.projection();
+  // GLC — combine the two calendar-year bands this ag-year straddles.
+  var glcY  = glcBandForCalendarYear(year);
+  var glcY1 = glcBandForCalendarYear(year.add(1));
+  var glcAvailCount = ee.Number(ee.Algorithms.If(year.lte(2022), 1, 0))
+    .add(ee.Algorithms.If(year.add(1).lte(2022), 1, 0));
+  var glcMask = ee.Image(ee.Algorithms.If(
+    glcAvailCount.gt(0),
+    glcY.add(glcY1).divide(glcAvailCount.max(1)).gte(0.5),
+    ee.Image(0)
+  )).rename('tree');
+  var proj = glcMask.projection();
 
-  // Dynamic World — active from 2015
-  var dwYear = dwCol.filter(ee.Filter.calendarRange(year, year, 'year')).select('label');
-  var dwMask = ee.Image(ee.Algorithms.If(
+  // Dynamic World — windowed to the ag-year (Jul 1(year) -> Jun 30(year+1))
+  var dwStart = ee.Date.fromYMD(year, 7, 1);
+  var dwEnd   = ee.Date.fromYMD(year.add(1), 6, 30).advance(1, 'day');
+  var dwYear  = dwCol.filterDate(dwStart, dwEnd).select('label');
+  var dwMask  = ee.Image(ee.Algorithms.If(
     dwYear.size().gt(0),
     dwYear.mode().eq(1).unmask(0),
     ee.Image(0)
   )).rename('tree').reproject({crs: proj, scale: 30});
 
-  // IndiaSat — active from 2017
+  // IndiaSat — already ag-year aligned
   var indiaSatMask = getIndiaSatMask(year).reproject({crs: proj, scale: 30});
 
   // Majority vote
   var glcActive      = ee.Algorithms.If(year.lte(2022), 1, 0);
   var forestSum      = glcMask.unmask(0).add(dwMask.unmask(0)).add(indiaSatMask.unmask(0));
   var dwActive       = ee.Algorithms.If(year.gte(2015), 1, 0);
-  var indiasatActive = ee.Algorithms.If(year.gte(2017).and(year.lte(2024)), 1, 0);
+  var indiasatActive = ee.Algorithms.If(year.gte(LULC_START_YEAR), 1, 0);
   var activeDatasets = ee.Number(glcActive).add(dwActive).add(indiasatActive);
   var requiredVotes  = ee.Algorithms.If(activeDatasets.eq(1), 1, 2);
   var hybridMask     = forestSum.gte(ee.Number(requiredVotes));
@@ -188,9 +207,9 @@ var RUN_LENGTH_VIS = {
 };
 
 Map.addLayer(finalOutput.select('length'),     RUN_LENGTH_VIS,       'Forest period length');
-Map.addLayer(finalOutput.select('start_year'), {min:2003, max:2022,
+Map.addLayer(finalOutput.select('start_year'), {min: START_YEAR, max: END_YEAR,
   palette:['#ffffd4','#fed98e','#fe9929','#d95f0e','#993404']},      'Forest start year');
-Map.addLayer(finalOutput.select('end_year'),   {min:2003, max:2022,
+Map.addLayer(finalOutput.select('end_year'),   {min: START_YEAR, max: END_YEAR,
   palette:['#f7fbff','#c6dbef','#6baed6','#2171b5','#08306b']},      'Forest end year');
 
 Export.image.toAsset({

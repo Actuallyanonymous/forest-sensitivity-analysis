@@ -2,6 +2,10 @@
  * Forest Sensitivity Analysis Pipeline — Script 2
  * Drought Resistance & Resilience (Harmonized kNDVI + Signed Formulas)
  *
+ * AGRICULTURAL YEAR CONVENTION:
+ * Year `y` = Jul 1 of `y` -> Jun 30 of `y+1`. The SPEI-3 July–September
+ * band of calendar year `y` falls inside ag-year `y`.
+ *
  * For each forest pixel and drought year that has a next-year kNDVI,
  * stores signed resistance, signed resilience, and the yearly class.
  * A year without Ye+1 is not scored, including resistance.
@@ -26,21 +30,21 @@
 
 // CONFIGURATION :=
 
-var TREE_COVER_ASSET  = 'projects/cs5-pushkinmangla/assets/MP_Hybrid_Tree_Period_2003_2022';
-var SPEI3_ASSET       = 'projects/cs5-pushkinmangla/assets/SPEI/SPEI3_Madhya_Pradesh';
-var OUTPUT_ASSET_ID   = 'projects/cs5-pushkinmangla/assets/MP_Drought_Metrics_SPEI3_JAS';
-var OUTPUT_DESC       = 'MP_Drought_Metrics_SPEI3_JAS';
-var STATE_NAME        = 'Madhya Pradesh';
+var TREE_COVER_ASSET  = 'projects/sura-496709/assets/Orissa_Hybrid_Tree_Period_2004_2024';
+var SPEI3_ASSET       = 'projects/corestack-datasets-alpha/assets/datasets/SPEI_updated/SPEI3';
+var OUTPUT_ASSET_ID   = 'projects/sura-496709/assets/Orissa_Drought_Metrics_SPEI3_JAS';
+var OUTPUT_DESC       = 'Orissa_Drought_Metrics_SPEI3_JAS';
+var STATE_NAME        = 'Orissa';
 var START_YEAR        = 2004;
-var END_YEAR          = 2022;
+var END_YEAR          = 2024;
 var DROUGHT_THRESHOLD = -1.0;   // SPEI-3 JAS below this = drought year
 
 // Fixed baseline window. This is independent of analysis START_YEAR/END_YEAR.
 // Please don't EVER change this once results are published, or old outputs will change when the pipeline timeline is extended.
 // This helps in fixing the Yn_bar (the average of the non-drought year NDVI) to a constant value.
-// SPEI-3 in the current file runs through 2023 (y2004_m07_09 ... y2023_m07_09). Do not set the end to 2024 until that band exists.
+// SPEI-3 runs through 2024 for the July–September band (y2004_m07_09 ... y2024_m07_09).
 var BASELINE_START_YEAR = 2004;  // SPEI has no data before 2004
-var BASELINE_END_YEAR   = 2023;
+var BASELINE_END_YEAR   = 2024;
 
 // AOI :=
 
@@ -109,10 +113,11 @@ var prepL89 = function(image) {
   return harmonized.copyProperties(image, ["system:time_start"]);
 };
 
-// Calculate annual median kNDVI
+// Calculate ag-year median kNDVI (Jul 1(year) -> Jun 30(year+1))
 var getAnnualKNDVI = function(year) {
-  var start = ee.Date.fromYMD(year, 1, 1);
-  var end   = ee.Date.fromYMD(year, 12, 31);
+  var start = ee.Date.fromYMD(year, 7, 1);
+  // end-exclusive filterDate, so advance 1 day past Jun 30 to include it
+  var end   = ee.Date.fromYMD(ee.Number(year).add(1), 6, 30).advance(1, 'day');
 
   var l89 = ee.ImageCollection('LANDSAT/LC08/C02/T1_L2')
               .merge(ee.ImageCollection('LANDSAT/LC09/C02/T1_L2'))

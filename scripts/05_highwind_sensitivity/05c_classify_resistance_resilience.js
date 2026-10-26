@@ -8,10 +8,10 @@
  * Script 5b does not score a year unless the next year's kNDVI exists.
  */
 
-var YEARLY_ASSET = 'projects/sura-496709/assets/AP_Wind_Metrics_Harmonized_kNDVI';
-var OUTPUT_ASSET_ID = 'projects/sura-496709/assets/AP_Wind_Metrics_ClassMean';
-var OUTPUT_DESC = 'AP_Wind_Metrics_ClassMean';
-var STATE_NAME = 'Andhra Pradesh';
+var YEARLY_ASSET = 'projects/sura-496709/assets/Orissa_Wind_Metrics_Harmonized_kNDVI';
+var OUTPUT_ASSET_ID = 'projects/sura-496709/assets/Orissa_Wind_Metrics_ClassMean';
+var OUTPUT_DESC = 'Orissa_Wind_Metrics_ClassMean';
+var STATE_NAME = 'Orissa';
 var START_YEAR = 2004;
 var END_YEAR = 2024;
 
