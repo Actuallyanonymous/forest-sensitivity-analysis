@@ -260,13 +260,13 @@ def generate_rainfall_resilience(
 
         resistance = (
             Yn_bar.divide(diffAbs)
-            .multiply(diffRaw.signum())
+            .multiply(diffRaw.signum().where(diffRaw.eq(0), 1))
             .rename("resistance")
             .updateMask(scored)
         )
         resilience = (
             diffAbs.divide(diffNextAbs)
-            .multiply(diffNext.signum())
+            .multiply(diffNext.signum().where(diffNext.eq(0), 1))
             .rename("resilience")
             .updateMask(scored.And(deepDrop))
         )

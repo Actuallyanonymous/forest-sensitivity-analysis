@@ -214,12 +214,12 @@ var metricsCol = ee.ImageCollection(analysisYears.map(function(y) {
   var deepDrop = ratio.lt(0.95);
 
   var resistance = Yn_bar.divide(diffAbs)
-                         .multiply(diffRaw.signum())
+                         .multiply(diffRaw.signum().where(diffRaw.eq(0), 1))
                          .rename('resistance')
                          .updateMask(scored);
 
   var resilience = diffAbs.divide(diffNextAbs)
-                          .multiply(diffNext.signum())
+                          .multiply(diffNext.signum().where(diffNext.eq(0), 1))
                           .rename('resilience')
                           .updateMask(scored.and(deepDrop));
 
