@@ -36,11 +36,8 @@ def fire_index(aez, start_year=2004, end_year=2024, gee_account_id=None):
     * fireAvg_{year}    = average daily FRP on fire days
     * maxFRP_{year}     = maximum daily FRP recorded in the ag-year
     *
-    * Fire day definition: daily MaxFRP > 30 (MODIS Terra Thermal Anomalies).
-    * NOTE: MaxFRP's documented GEE scale factor is 0.1 (raw -> MW) and this
-    * threshold is compared against the raw band with no scaling applied —
-    * left as-is deliberately, matching the threshold choice already made
-    * in the resistance/resilience script for this index.
+    * Fire day definition: daily MaxFRP > 30 MW (MODIS Terra Thermal Anomalies).
+    * MaxFRP is multiplied by 0.1, the GEE scale factor, before that cut.
     *
     * Requires: nothing — only public datasets (MODIS MOD14A1)
     """
@@ -119,7 +116,7 @@ def fire_index(aez, start_year=2004, end_year=2024, gee_account_id=None):
         # end-exclusive filterDate, so advance 1 day past Jun 30 to include it
         end = ee.Date.fromYMD(ee.Number(y).add(1), 6, 30).advance(1, "day")
 
-        yearCollection = modisFire.filterDate(start, end)
+        yearCollection = modisFire.filterDate(start, end).map(lambda img: img.multiply(0.1))
 
         #  Absolute maximum daily FRP for this ag-year
         maxFRP = (

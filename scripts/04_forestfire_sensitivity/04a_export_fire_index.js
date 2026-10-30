@@ -57,7 +57,7 @@ var annualMetrics = ee.ImageCollection(metricsYears.map(function(y) {
   // end-exclusive filterDate, so advance 1 day past Jun 30 to include it
   var end   = ee.Date.fromYMD(ee.Number(y).add(1), 6, 30).advance(1, 'day');
 
-  var yearCollection = modisFire.filterDate(start, end);
+  var yearCollection = modisFire.filterDate(start, end).map(function(img) { return img.multiply(0.1); });
 
   var maxFRP = yearCollection.max()
                              .unmask(0)
