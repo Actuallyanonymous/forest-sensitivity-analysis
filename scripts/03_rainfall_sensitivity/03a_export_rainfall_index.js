@@ -152,7 +152,7 @@ var hmStdDev = baselineMetrics.select('Hm').reduce(ee.Reducer.stdDev());
 // Changed to server-side map architecture instead of the annual image collection, done for GEE optimisation.. as it's a better practice. 
 var completedAnnualCollection = annualMetrics.map(function(img) {
   var hm = img.select('Hm');
-  var z  = hm.subtract(hmMean).divide(hmStdDev).rename('zScore');
+  var z  = hm.subtract(hmMean).divide(hmStdDev).updateMask(hmStdDev.gt(0)).rename('zScore');
   return img.addBands(z); 
 });
 

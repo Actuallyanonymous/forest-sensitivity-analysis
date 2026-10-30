@@ -167,7 +167,7 @@ def rainfall_index(aez, start_year=2004, end_year=None, gee_account_id=None):
 
     def add_zscore(img):
         hm = img.select("Hm")
-        z = hm.subtract(hmMean).divide(hmStdDev).rename("zScore")
+        z = hm.subtract(hmMean).divide(hmStdDev).updateMask(hmStdDev.gt(0)).rename("zScore")
         return img.addBands(z)
 
     completedAnnualCollection = annualMetrics.map(add_zscore)
