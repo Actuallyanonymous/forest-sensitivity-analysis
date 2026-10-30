@@ -86,6 +86,50 @@ var rainIndex = ee.Image(RAIN_INDEX_ASSET);
 var zMinYear = Math.min(START_YEAR, BASELINE_START_YEAR);
 var zMaxYear = Math.max(END_YEAR, BASELINE_END_YEAR);
 
+// Tree-mask asset names embed the end year; the rain-index name does not.
+// A missing asset or a stale index fails here instead of inside select().
+var treeAssetInfo = null;
+try {
+  treeAssetInfo = ee.data.getAsset(TREE_COVER_ASSET);
+} catch (err) {
+  treeAssetInfo = null;
+}
+if (!treeAssetInfo) {
+  throw new Error(
+    'Tree cover asset not found: ' + TREE_COVER_ASSET +
+    '. Run the forest mask script with END_YEAR=' + END_YEAR + ' first.'
+  );
+}
+var rainAssetInfo = null;
+try {
+  rainAssetInfo = ee.data.getAsset(RAIN_INDEX_ASSET);
+} catch (err) {
+  rainAssetInfo = null;
+}
+if (!rainAssetInfo) {
+  throw new Error('Rain index asset not found: ' + RAIN_INDEX_ASSET + '.');
+}
+
+var requiredZBands = [];
+for (var checkYear = zMinYear; checkYear <= zMaxYear; checkYear++) {
+  requiredZBands.push('zScore_' + checkYear);
+}
+var availableZBands = ee.Image(RAIN_INDEX_ASSET).bandNames().getInfo();
+var missingZBands = [];
+for (var bandIndex = 0; bandIndex < requiredZBands.length; bandIndex++) {
+  if (availableZBands.indexOf(requiredZBands[bandIndex]) === -1) {
+    missingZBands.push(requiredZBands[bandIndex]);
+  }
+}
+if (missingZBands.length > 0) {
+  throw new Error(
+    RAIN_INDEX_ASSET + ' is missing bands: ' + missingZBands.join(', ') +
+    '. It was likely exported with a smaller END_YEAR — re-run the rainfall ' +
+    'index with END_YEAR >= ' + zMaxYear + ' (delete the existing asset first, ' +
+    'its name does not auto-version).'
+  );
+}
+
 var zScoreCol_list = [];
 for (var y = zMinYear; y <= zMaxYear; y++) {
   zScoreCol_list.push(

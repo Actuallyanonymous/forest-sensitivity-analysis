@@ -65,6 +65,49 @@ var spei3_raw = ee.Image(SPEI3_ASSET);
 var speiMinYear = Math.min(START_YEAR, BASELINE_START_YEAR);
 var speiMaxYear = Math.max(END_YEAR, BASELINE_END_YEAR);
 
+// A missing tree mask or SPEI asset, or a short SPEI image, fails here
+// instead of inside select().
+var treeAssetInfo = null;
+try {
+  treeAssetInfo = ee.data.getAsset(TREE_COVER_ASSET);
+} catch (err) {
+  treeAssetInfo = null;
+}
+if (!treeAssetInfo) {
+  throw new Error(
+    'Tree cover asset not found: ' + TREE_COVER_ASSET +
+    '. Run the forest mask script with END_YEAR=' + END_YEAR + ' first.'
+  );
+}
+var speiAssetInfo = null;
+try {
+  speiAssetInfo = ee.data.getAsset(SPEI3_ASSET);
+} catch (err) {
+  speiAssetInfo = null;
+}
+if (!speiAssetInfo) {
+  throw new Error('SPEI-3 asset not found: ' + SPEI3_ASSET + '.');
+}
+
+var requiredSpeiBands = [];
+for (var checkYear = speiMinYear; checkYear <= speiMaxYear; checkYear++) {
+  requiredSpeiBands.push('y' + checkYear + '_m07_09');
+}
+var availableSpeiBands = ee.Image(SPEI3_ASSET).bandNames().getInfo();
+var missingSpeiBands = [];
+for (var bandIndex = 0; bandIndex < requiredSpeiBands.length; bandIndex++) {
+  if (availableSpeiBands.indexOf(requiredSpeiBands[bandIndex]) === -1) {
+    missingSpeiBands.push(requiredSpeiBands[bandIndex]);
+  }
+}
+if (missingSpeiBands.length > 0) {
+  throw new Error(
+    SPEI3_ASSET + ' is missing bands: ' + missingSpeiBands.join(', ') +
+    '. Re-run the SPEI pipeline with start_year<=2004 and end_year>=' +
+    speiMaxYear + '.'
+  );
+}
+
 var speiImages = [];
 for (var y = speiMinYear; y <= speiMaxYear; y++) {
   // SPEI-3 ending September = July–August–September

@@ -74,6 +74,50 @@ var windIndex_raw = ee.Image(WIND_INDEX_ASSET);
 var wsMinYear = Math.min(START_YEAR, BASELINE_START_YEAR);
 var wsMaxYear = Math.max(END_YEAR, BASELINE_END_YEAR);
 
+// Tree-mask asset names embed the end year; the wind-index name does not.
+// A missing asset or a stale index fails here instead of inside select().
+var treeAssetInfo = null;
+try {
+  treeAssetInfo = ee.data.getAsset(TREE_COVER_ASSET);
+} catch (err) {
+  treeAssetInfo = null;
+}
+if (!treeAssetInfo) {
+  throw new Error(
+    'Tree cover asset not found: ' + TREE_COVER_ASSET +
+    '. Run the forest mask script with END_YEAR=' + END_YEAR + ' first.'
+  );
+}
+var windAssetInfo = null;
+try {
+  windAssetInfo = ee.data.getAsset(WIND_INDEX_ASSET);
+} catch (err) {
+  windAssetInfo = null;
+}
+if (!windAssetInfo) {
+  throw new Error('Wind index asset not found: ' + WIND_INDEX_ASSET + '.');
+}
+
+var requiredWsBands = [];
+for (var checkYear = wsMinYear; checkYear <= wsMaxYear; checkYear++) {
+  requiredWsBands.push('WSmax_' + checkYear);
+}
+var availableWsBands = ee.Image(WIND_INDEX_ASSET).bandNames().getInfo();
+var missingWsBands = [];
+for (var bandIndex = 0; bandIndex < requiredWsBands.length; bandIndex++) {
+  if (availableWsBands.indexOf(requiredWsBands[bandIndex]) === -1) {
+    missingWsBands.push(requiredWsBands[bandIndex]);
+  }
+}
+if (missingWsBands.length > 0) {
+  throw new Error(
+    WIND_INDEX_ASSET + ' is missing bands: ' + missingWsBands.join(', ') +
+    '. It was likely exported with a smaller END_YEAR — re-run the wind ' +
+    'index with END_YEAR >= ' + wsMaxYear + ' (delete the existing asset first, ' +
+    'its name does not auto-version).'
+  );
+}
+
 var wsImages = [];
 for (var y = wsMinYear; y <= wsMaxYear; y++) {
   wsImages.push(
