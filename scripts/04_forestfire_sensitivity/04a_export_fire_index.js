@@ -107,7 +107,7 @@ var frpStdDev = baselineMetrics.select('FRP').reduce(ee.Reducer.stdDev());
 
 var completedAnnualCollection = annualMetrics.map(function(img) {
   var frp = img.select('FRP');
-  var z   = frp.subtract(frpMean).divide(frpStdDev).rename('zScore');
+  var z   = frp.subtract(frpMean).divide(frpStdDev).updateMask(frpStdDev.gt(0)).rename('zScore');
   return img.addBands(z);
 });
 

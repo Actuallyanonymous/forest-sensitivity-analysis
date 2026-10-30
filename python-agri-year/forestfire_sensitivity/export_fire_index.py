@@ -172,7 +172,7 @@ def fire_index(aez, start_year=2004, end_year=2024, gee_account_id=None):
     #  Server-side map architecture over the annual image collection
     def completed_annual_collection_func(img):
         frp = img.select("FRP")
-        z = frp.subtract(frpMean).divide(frpStdDev).rename("zScore")
+        z = frp.subtract(frpMean).divide(frpStdDev).updateMask(frpStdDev.gt(0)).rename("zScore")
         return img.addBands(z)
 
     completedAnnualCollection = annualMetrics.map(completed_annual_collection_func)
