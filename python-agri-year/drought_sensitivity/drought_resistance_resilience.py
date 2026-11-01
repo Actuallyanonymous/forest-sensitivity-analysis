@@ -236,7 +236,8 @@ def generate_drought_resistance(
             .reproject(crs=kndvi.projection(), scale=30)
         )
         isNonDrought = spei.gte(DROUGHT_THRESHOLD)
-        return kndvi.updateMask(isNonDrought).set("year", year)
+        isForest = startYear.lte(year).And(endYear.gte(year))
+        return kndvi.updateMask(isNonDrought.And(isForest)).set("year", year)
 
     kndviNonDrought = ee.ImageCollection(baselineYears.map(calc_kndviNonDrought))
 

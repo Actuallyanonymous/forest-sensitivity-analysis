@@ -123,10 +123,10 @@ The hazard grid is bilinearly resampled to 30 m before the rule is applied. A ye
 
 | Hazard | Event year | Years in `Ȳn` | Forest mask on `Ȳn` |
 |---|---|---|---|
-| Drought | SPEI-3 July–September `< −1` | SPEI-3 July–September `≥ −1` | No. A non-drought year counts even if the pixel was not forest. |
+| Drought | SPEI-3 July–September `< −1` | SPEI-3 July–September `≥ −1` | Yes |
 | Heavy rain | `Hm` z-score `> +1` | `\|z\| < 1` on `Hm` | Yes |
 | Fire | annual fire-day FRP z-score `> +1` | `\|z\| < 1` on that FRP sum | Yes |
-| High wind | `WSmax > 15` m/s | `WSmax ≤ 15` m/s | No. Same rule as drought: a non-event year counts even outside the forest period. |
+| High wind | `WSmax > 15` m/s | `WSmax ≤ 15` m/s | Yes |
 
 Exactly −1 on SPEI-3, and exactly +1 or −1 on a z-score, are not events. A dry rainfall year (`z < −1`) is not a heavy-rain event and is not removed from the rain baseline for that reason. A low-fire year (`z < −1`) is not a fire event.
 

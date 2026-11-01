@@ -217,7 +217,8 @@ var kndviNonEvent = ee.ImageCollection(baselineYears.map(function(y) {
                  .resample('bilinear')
                  .reproject({crs: kndvi.projection(), scale: 30});
   var isNonEvent = ws.lte(WIND_THRESHOLD);
-  return kndvi.updateMask(isNonEvent).set('year', year);
+  var isForest = startYear.lte(year).and(endYear.gte(year));
+  return kndvi.updateMask(isNonEvent.and(isForest)).set('year', year);
 }));
 
 var Yn_bar = kndviNonEvent.mean().rename('kndvi_baseline');

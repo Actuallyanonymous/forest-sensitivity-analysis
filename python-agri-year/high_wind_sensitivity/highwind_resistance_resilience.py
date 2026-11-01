@@ -247,7 +247,8 @@ def high_wind_sensitivity(aez, start_year=2004, end_year=None, gee_account_id=No
             .reproject(crs=kndvi.projection(), scale=30)
         )
         isNonEvent = ws.lte(WIND_THRESHOLD)
-        return kndvi.updateMask(isNonEvent).set("year", year)
+        isForest = startYear.lte(year).And(endYear.gte(year))
+        return kndvi.updateMask(isNonEvent.And(isForest)).set("year", year)
 
     kndviNonEvent = ee.ImageCollection(baselineYears.map(calc_kndvi_non_event))
 

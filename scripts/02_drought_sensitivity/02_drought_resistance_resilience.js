@@ -207,7 +207,8 @@ var kndviNonDrought = ee.ImageCollection(baselineYears.map(function(y) {
                  .resample('bilinear')
                  .reproject({crs: kndvi.projection(), scale: 30});
   var isNonDrought = spei.gte(DROUGHT_THRESHOLD);
-  return kndvi.updateMask(isNonDrought).set('year', year);
+  var isForest = startYear.lte(year).and(endYear.gte(year));
+  return kndvi.updateMask(isNonDrought.and(isForest)).set('year', year);
 }));
 
 var Yn_bar = kndviNonDrought.mean().rename('kndvi_baseline');
