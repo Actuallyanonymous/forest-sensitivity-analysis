@@ -19,7 +19,12 @@ var BASELINE_END_YEAR   = 2024;
 
 var OUTPUT_ASSET_ID = 'projects/sura-496709/assets/Orissa_Fire_Index_FRP30';
 var OUTPUT_DESC     = 'Orissa_Fire_Index_FRP30';
+var FRP_SCALE       = 0.1;
+// 30 MW. Daily images stay unscaled; the raw cut is 30 / 0.1 = 300.
+// Scaling each day before max/sum attaches a 1-degree grid and the export
+// fails with "Can't transform (0.0,0.0)".
 var FRP_THRESHOLD   = 30;
+var FRP_RAW_THRESHOLD = FRP_THRESHOLD / FRP_SCALE;
 
 //===========================================================================
 //                          2. AOI
@@ -57,19 +62,21 @@ var annualMetrics = ee.ImageCollection(metricsYears.map(function(y) {
   // end-exclusive filterDate, so advance 1 day past Jun 30 to include it
   var end   = ee.Date.fromYMD(ee.Number(y).add(1), 6, 30).advance(1, 'day');
 
-  var yearCollection = modisFire.filterDate(start, end).map(function(img) { return img.multiply(0.1); });
+  var yearCollection = modisFire.filterDate(start, end);
 
   var maxFRP = yearCollection.max()
+                             .multiply(FRP_SCALE)
                              .unmask(0)
                              .setDefaultProjection(proj)
                              .rename('maxFRP');
 
   var fireDaysCollection = yearCollection.map(function(img) {
-    return img.updateMask(img.gt(FRP_THRESHOLD));
+    return img.updateMask(img.gt(FRP_RAW_THRESHOLD));
   });
 
   var sumFRP = fireDaysCollection.map(function(img) { return img.unmask(0); })
                                  .sum()
+                                 .multiply(FRP_SCALE)
                                  .setDefaultProjection(proj)
                                  .rename('FRP');
 
@@ -80,6 +87,7 @@ var annualMetrics = ee.ImageCollection(metricsYears.map(function(y) {
                                    .rename('fireDays');
 
   var fireAvg = fireDaysCollection.mean()
+                                  .multiply(FRP_SCALE)
                                   .unmask(0)
                                   .setDefaultProjection(proj)
                                   .rename('fireAvg');
